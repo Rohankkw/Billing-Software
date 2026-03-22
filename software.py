@@ -1,7 +1,7 @@
 import random
 from email.message import EmailMessage
 from tkinter import *
-from tkinter.messagebox import showerror, showinfo, showwarning
+from tkinter.messagebox import askyesno, showerror, showinfo, showwarning
 from tkinter.ttk import Combobox, Treeview
 import sqlite3
 from tkinter import ttk
@@ -21,6 +21,7 @@ class Billing:
         self.current_widgets = []
         self.current_second_button = []
         self.billing_menu_global_binding_set = False
+        self.is_logged_in = False
 
         #for updated item to fetch in combobox
         self.updated_items = {}
@@ -32,6 +33,7 @@ class Billing:
         self.load_item_menu()
         self.main_window()
         self.navigation_frame()
+        self.initialize_login_state()
 
         try:
             self.root.mainloop()
@@ -41,21 +43,25 @@ class Billing:
         self.shop_name=""
         self.gst_number=""
         self.email = ""
+        self.app_password_value = ""
+        self.account_login_password = ""
 
     #------- calling profile variables --------#
     def calling_profile_variables(self):
-        self.c.execute("SELECT shop_name, gst_number, email FROM profile")
+        self.c.execute("SELECT shop_name, gst_number, email, app_password, account_password FROM profile")
         row = self.c.fetchone()
 
         if row:  # if there is data
-            name, gst, email = row
+            name, gst, email, app_password, account_password = row
         else:
-            name, gst, email = None, None
+            name, gst, email, app_password, account_password = None, None, None, None, None
 
         # Assign to variables with fallback
         self.shop_name = name if name else "Not Provided"
         self.gst_number = gst if gst else "Not Provided"
         self.email = email
+        self.app_password_value = app_password if app_password else ""
+        self.account_login_password = account_password if account_password else ""
 
     # --- creating main database ---
     def init_database(self):
@@ -67,7 +73,29 @@ class Billing:
             self.c.execute("create table if not exists menu(name text, price integer)")
             self.c.execute("create table if not exists daily_track(id integer, name text, total_sold integer, unit_price float, total_revenue float)")
             self.c.execute("create table if not exists monthly_track(rank integer, time text, total_revenue float, top_selling text)")
-            self.c.execute("create table if not exists profile(shop_name text, gst_number text, email text)")
+            self.c.execute("create table if not exists profile(shop_name text, gst_number text, email text, app_password text, account_password text, last_login_date text)")
+            self.c.execute("PRAGMA table_info(profile)")
+            existing_columns = [column[1] for column in self.c.fetchall()]
+            if "app_password" not in existing_columns:
+                self.c.execute("ALTER TABLE profile ADD COLUMN app_password text")
+            if "account_password" not in existing_columns:
+                self.c.execute("ALTER TABLE profile ADD COLUMN account_password text")
+            if "last_login_date" not in existing_columns:
+                self.c.execute("ALTER TABLE profile ADD COLUMN last_login_date text")
+
+            self.c.execute("SELECT COUNT(*) FROM profile")
+            profile_count = self.c.fetchone()[0]
+
+            if profile_count == 0:
+                self.c.execute(
+                    "INSERT INTO profile (shop_name, gst_number, email, app_password, account_password, last_login_date) VALUES (?, ?, ?, ?, ?, ?)",
+                    (None, None, None, None, "Admin@123", None)
+                )
+            else:
+                self.c.execute(
+                    "UPDATE profile SET account_password = ? WHERE account_password IS NULL OR TRIM(account_password) = ''",
+                    ("Admin@123",)
+                )
             self.conn.commit()
         except Exception as e:
             showerror("Database Error", f"Problem {e}")
@@ -80,14 +108,86 @@ class Billing:
 
     def otp_expired(self):
         self.otp_number = None
+
+    def guarded_showerror(self, title, message, button=None, reset_text=None):
+        if getattr(self, "_error_dialog_open", False):
+            return
+
+        self._error_dialog_open = True
+
+        try:
+            if button and button.winfo_exists():
+                button.config(state=DISABLED)
+
+            showerror(title, message)
+        finally:
+            try:
+                if button and button.winfo_exists():
+                    if reset_text is not None:
+                        button.config(text=reset_text)
+                    button.config(state=NORMAL)
+            except:
+                pass
+
+            self._error_dialog_open = False
+
+    def add_password_toggle(self, parent, entry_widget):
+        def toggle_password():
+            if entry_widget.cget("show") == "":
+                entry_widget.config(show="*")
+                toggle_btn.config(text="Show")
+            else:
+                entry_widget.config(show="")
+                toggle_btn.config(text="Hide")
+
+        toggle_btn = Button(
+            parent,
+            text="Show",
+            font=('Arial', 10, 'bold'),
+            width=6,
+            bg='#5D688A',
+            fg='white',
+            command=toggle_password
+        )
+        toggle_btn.pack(side='left', padx=(6, 10), pady=10)
+        return toggle_btn
+
+    def get_saved_email_credentials(self):
+        try:
+            self.c.execute("SELECT email, app_password FROM profile")
+            row = self.c.fetchone()
+            if row:
+                email, app_password = row
+            else:
+                email, app_password = None, None
+        except:
+            email, app_password = None, None
+
+        self.email = email if email else None
+        self.app_password_value = app_password if app_password else ""
+        return self.email, self.app_password_value
+
+    def get_login_credentials(self):
+        try:
+            self.c.execute("SELECT email, account_password, last_login_date FROM profile")
+            row = self.c.fetchone()
+            if row:
+                email, account_password, last_login_date = row
+            else:
+                email, account_password, last_login_date = None, None, None
+        except:
+            email, account_password, last_login_date = None, None, None
+
+        self.account_login_password = account_password if account_password else ""
+        return email, self.account_login_password, last_login_date
+
     #---------- EMAIl Sending --------#
     def sending_otp_email(self):
-        sender_email = 'airdropmail919@gmail.com'
-        sender_password = 'ngctzzncsgehzlwb'
-        # to_email = self.old_mail_entry.get().strip()
+        sender_email, sender_password = self.get_saved_email_credentials()
 
-        # if not to_email:
-        #     showerror("Not Found", "Email Not Found!")
+        if not sender_email or not sender_password:
+            showerror("Email Setup Required", "Add your email and app password first.")
+            return
 
         # Create the email
         msg = EmailMessage()
@@ -167,8 +267,9 @@ class Billing:
         extra_space = Frame(self._nav_frame,bg='#2c3e50')
         extra_space.pack(fill='both',expand=True)
 
-        self.login_button = Button(self._nav_frame, text="Logout", font=('Arial',12),
-                                   width=20, height=2, bg='#e74c3c',fg='white')
+        self.login_button = Button(self._nav_frame, text="Login", font=('Arial',12),
+                                   width=20, height=2, bg='#27ae60',fg='white',
+                                   command=self.open_login_window)
         self.login_button.pack(fill='x',pady=10,padx=10)
 
     # --- design to active button ---
@@ -178,6 +279,156 @@ class Billing:
                     button.config(bg='#3498db', fg='white')
                 else:
                     button.config(bg='#ecf0f1', fg='black')
+
+    def initialize_login_state(self):
+        email, account_password, last_login_date = self.get_login_credentials()
+        today = date.today().isoformat()
+
+        if account_password:
+            self.is_logged_in = last_login_date == today
+        else:
+            self.is_logged_in = True
+
+        self.update_navigation_access()
+
+        if self.is_logged_in:
+            self.set_billing_page()
+        else:
+            self.show_login_page()
+
+    def update_navigation_access(self):
+        nav_state = NORMAL if self.is_logged_in else DISABLED
+
+        for button in self.nav_buttons.values():
+            try:
+                button.config(state=nav_state)
+            except:
+                pass
+
+        if self.is_logged_in:
+            self.login_button.config(text="Logout", bg='#e74c3c', fg='white', command=self.logout_user, state=NORMAL)
+        else:
+            self.login_button.config(text="Login", bg='#27ae60', fg='white', command=self.open_login_window, state=NORMAL)
+
+    def show_login_page(self):
+        self.clear_page()
+        for button in self.nav_buttons.values():
+            try:
+                button.config(bg='#ecf0f1', fg='black')
+            except:
+                pass
+
+        self.login_page_frame = Frame(self.root, bg='white')
+        self.login_page_frame.pack(fill='both', expand=True)
+        self.current_widgets.append(self.login_page_frame)
+
+        center_frame = Frame(self.login_page_frame, bg='white')
+        center_frame.place(relx=0.5, rely=0.5, anchor='center')
+
+        Label(center_frame, text="QUICK SVR", font=('Arial', 30, 'bold'),
+              bg='white', fg='#9B177E').pack(pady=(0, 20))
+
+        Label(center_frame, text="Quick SVR is a Product by Quick Blockchains",
+              font=('Arial', 13), bg='white', fg='#444444').pack(pady=(0, 25))
+
+        self.login_page_button = Button(
+            center_frame,
+            text="Login",
+            font=('Arial', 14, 'bold'),
+            width=18,
+            height=2,
+            bg='#27ae60',
+            fg='white',
+            command=self.open_login_window
+        )
+        self.login_page_button.pack()
+
+    def open_login_window(self):
+        email, account_password, _ = self.get_login_credentials()
+
+        if not email or not account_password:
+            self.guarded_showerror(
+                "Login Not Ready",
+                "Set an account email and password first from the account section.",
+                getattr(self, "login_page_button", None)
+            )
+            return
+
+        self.window_for_buttons()
+        self.clear_second_window()
+
+        main_frame = Frame(self.button_root, bg="#4A9782")
+        main_frame.pack(fill='both', padx=10, pady=10, expand=True)
+        self.current_second_button.append(main_frame)
+
+        login_frame = Frame(main_frame, bg='#F9F3EF', relief="raised", bd=2)
+        login_frame.pack(fill='x', padx=10, pady=120)
+
+        Label(login_frame, text="Daily Login", font=('Arial', 18, 'bold'),
+              bg='#F9F3EF', fg='black').pack(pady=(20, 10))
+
+        email_frame = Frame(login_frame, bg='#F9F3EF', relief="raised", bd=1)
+        email_frame.pack(fill='x', padx=10, pady=10)
+
+        Label(email_frame, text="Email:", font=('Arial', 12, 'bold'),
+              bg='#F9F3EF', fg='black').pack(side='left', padx=10, pady=10)
+
+        self.login_email_entry = ttk.Entry(email_frame, width=30)
+        self.login_email_entry.pack(side='left', padx=10, pady=10)
+
+        password_frame = Frame(login_frame, bg='#F9F3EF', relief="raised", bd=1)
+        password_frame.pack(fill='x', padx=10, pady=10)
+
+        Label(password_frame, text="Password:", font=('Arial', 12, 'bold'),
+              bg='#F9F3EF', fg='black').pack(side='left', padx=10, pady=10)
+
+        self.login_password_entry = ttk.Entry(password_frame, width=30, show='*')
+        self.login_password_entry.pack(side='left', padx=10, pady=10)
+        self.add_password_toggle(password_frame, self.login_password_entry)
+
+        self.login_submit_btn = Button(
+            login_frame,
+            text="Login",
+            font=('Arial', 12, 'bold'),
+            width=15,
+            height=2,
+            bg='#0D5EA6',
+            fg='white',
+            command=self.process_daily_login
+        )
+        self.login_submit_btn.pack(pady=(20, 30))
+
+    def process_daily_login(self):
+        email, account_password, _ = self.get_login_credentials()
+        entered_email = self.login_email_entry.get().strip()
+        entered_password = self.login_password_entry.get().strip()
+
+        if entered_email != email or entered_password != account_password:
+            self.guarded_showerror("Login Failed", "Incorrect email or password.", self.login_submit_btn)
+            return
+
+        try:
+            self.c.execute("UPDATE profile SET last_login_date = ?", (date.today().isoformat(),))
+            self.conn.commit()
+        except Exception as e:
+            self.guarded_showerror("Login Error", f"Problem: {e}", self.login_submit_btn)
+            return
+
+        self.is_logged_in = True
+        self.update_navigation_access()
+        self.close_popup_window()
+        self.set_billing_page()
+
+    def logout_user(self):
+        try:
+            self.c.execute("UPDATE profile SET last_login_date = NULL")
+            self.conn.commit()
+        except:
+            pass
+
+        self.is_logged_in = False
+        self.update_navigation_access()
+        self.show_login_page()
 
     #Clearing widgets to swtich page---
     def clear_page(self):
@@ -206,12 +457,55 @@ class Billing:
                 pass
         self.current_second_button.clear()
 
+    def close_popup_window(self, event=None):
+        try:
+            try:
+                for button_name in (
+                    "generate_bill",
+                    "update_profile_btn",
+                    "change_email_btn",
+                    "change_pass_btn",
+                ):
+                    button = getattr(self, button_name, None)
+                    if button and button.winfo_exists():
+                        button.config(state=NORMAL)
+            except:
+                pass
+
+            try:
+                if hasattr(self, "four_btn_list"):
+                    for button in self.four_btn_list:
+                        if button and button.winfo_exists():
+                            button.config(state=NORMAL)
+            except:
+                pass
+
+            if hasattr(self, "button_root") and self.button_root.winfo_exists():
+                try:
+                    self.button_root.grab_release()
+                except:
+                    pass
+                self.button_root.destroy()
+        except:
+            pass
+        return "break" if event else None
+
     #--- second root windows ---
     def window_for_buttons(self):
-        self.button_root = Tk()
+        try:
+            if hasattr(self, "button_root") and self.button_root.winfo_exists():
+                self.button_root.destroy()
+        except:
+            pass
+
+        self.button_root = Toplevel(self.root)
         self.button_root.title("Quick SVR")
         self.button_root.config(bg='white')
         self.button_root.geometry("500x600")
+        self.button_root.transient(self.root)
+        self.button_root.grab_set()
+        self.button_root.bind("<Escape>", self.close_popup_window)
+        self.button_root.protocol("WM_DELETE_WINDOW", self.close_popup_window)
 
 
     #------------ BIlling Page Configuration -------------#
@@ -252,6 +546,7 @@ class Billing:
         self.item_search_entry.pack()
         self.item_search_entry.bind("<KeyRelease>", self.filter_billing_items)
         self.item_search_entry.bind("<Down>", self.focus_billing_menu)
+        self.item_search_entry.bind("<Return>", self.handle_billing_entry_return)
         self.item_search_entry.bind("<Button-1>", self.show_billing_menu)
         self.item_search_entry.bind("<Escape>", self.hide_billing_menu)
 
@@ -446,8 +741,12 @@ class Billing:
             self.button_root.destroy()
             self.generate_bill.config(state=NORMAL)
 
-        self.owner_email = "ncerohan@gmail.com"
-        self.app_password = "kxraktkjspeoeyga"
+        self.owner_email, self.app_password = self.get_saved_email_credentials()
+        if not self.owner_email or not self.app_password:
+            showerror("Email Setup Required", "Add your email and app password first.")
+            close_btn()
+            return
+
         message = EmailMessage()
         message['Subject'] = 'Your Restaurant Bill'
         message['From'] = self.owner_email
@@ -587,6 +886,21 @@ class Billing:
         self.hide_billing_menu()
         self.quantity_entry.focus_set()
 
+    def handle_billing_entry_return(self, event=None):
+        typed_item = self.item_search_var.get().strip()
+
+        if typed_item in self.updated_items:
+            self.selected_billing_item = typed_item
+            self.hide_billing_menu()
+            self.quantity_entry.focus_set()
+            return "break"
+
+        if self.billing_menu_items:
+            self.select_billing_menu_item()
+            return "break"
+
+        return "break"
+
     def focus_billing_menu(self, event=None):
         if not self.billing_menu_items:
             return "break"
@@ -665,6 +979,124 @@ class Billing:
         self.combo_box['values'] = list(self.updated_items.keys())
         self.combo_box.set("Choose Items")
 
+    def open_email_settings(self):
+        saved_email, _ = self.get_saved_email_credentials()
+        if saved_email:
+            self.updating_email()
+        else:
+            self.add_email_credentials_window()
+
+    def add_email_credentials_window(self):
+        self.window_for_buttons()
+        self.clear_second_window()
+
+        try:
+            for i in self.four_btn_list:
+                i.config(state=DISABLED)
+        except:
+            pass
+
+        try:
+            self.change_email_btn.configure(state=DISABLED)
+        except:
+            pass
+
+        def close_btn():
+            self.close_popup_window()
+
+        main_frame = Frame(self.button_root, bg="#4A9782")
+        main_frame.pack(fill='both', padx=10, pady=10, expand=True)
+        self.current_second_button.append(main_frame)
+
+        content_frame = Frame(main_frame, bg='#F9F3EF', relief="raised", bd=2)
+        content_frame.pack(fill='x', padx=10, pady=100)
+
+        Label(content_frame, text="Add Email Credentials", font=('Arial', 16, 'bold'),
+              bg='#F9F3EF', fg='black').pack(pady=(20, 10))
+
+        info_label = Label(
+            content_frame,
+            text="This email will be used for bills, sales reports and password OTP.",
+            font=('Arial', 11),
+            bg='#F9F3EF',
+            fg='black'
+        )
+        info_label.pack(pady=(0, 20))
+
+        email_frame = Frame(content_frame, bg='#F9F3EF', relief="raised", bd=1)
+        email_frame.pack(fill='x', padx=10, pady=10)
+
+        Label(email_frame, text="Email Address:", font=('Arial', 12, 'bold'),
+              bg='#F9F3EF', fg='black').pack(side='left', padx=10, pady=10)
+
+        self.setup_email_entry = ttk.Entry(email_frame, width=30)
+        self.setup_email_entry.pack(side='left', padx=10, pady=10)
+
+        password_frame = Frame(content_frame, bg='#F9F3EF', relief="raised", bd=1)
+        password_frame.pack(fill='x', padx=10, pady=10)
+
+        Label(password_frame, text="App Password:", font=('Arial', 12, 'bold'),
+              bg='#F9F3EF', fg='black').pack(side='left', padx=10, pady=10)
+
+        self.setup_app_password_entry = ttk.Entry(password_frame, width=30, show='*')
+        self.setup_app_password_entry.pack(side='left', padx=10, pady=10)
+        self.add_password_toggle(password_frame, self.setup_app_password_entry)
+
+        self.save_email_setup_btn = Button(
+            content_frame,
+            text="Save",
+            font=('Arial', 12, 'bold'),
+            width=15,
+            height=2,
+            bg='#0D5EA6',
+            fg='white',
+            command=self.save_email_credentials
+        )
+        self.save_email_setup_btn.pack(pady=(20, 30))
+
+        self.button_root.protocol("WM_DELETE_WINDOW", close_btn)
+        try:
+            self.button_root.mainloop()
+        except:
+            pass
+
+    def save_email_credentials(self):
+        email_address = self.setup_email_entry.get().strip()
+        app_password = self.setup_app_password_entry.get().strip()
+        pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-z]{2,}$'
+
+        if not re.match(pattern, email_address):
+            self.guarded_showerror("Invalid Email", "Enter a valid email address.", self.save_email_setup_btn)
+            return
+
+        if not app_password:
+            self.guarded_showerror("Missing Password", "Enter your email app password.", self.save_email_setup_btn)
+            return
+
+        try:
+            self.c.execute("SELECT COUNT(*) FROM profile")
+            row_count = self.c.fetchone()[0]
+
+            if row_count == 0:
+                self.c.execute(
+                    "INSERT INTO profile (shop_name, gst_number, email, app_password) VALUES (?, ?, ?, ?)",
+                    (None, None, email_address, app_password)
+                )
+            else:
+                self.c.execute(
+                    "UPDATE profile SET email = ?, app_password = ?",
+                    (email_address, app_password)
+                )
+
+            self.conn.commit()
+            self.email = email_address
+            self.app_password_value = app_password
+            showinfo("Success", "Email credentials saved successfully.")
+            self.close_popup_window()
+            self.accounts_page()
+        except Exception as e:
+            self.guarded_showerror("Save Error", f"Problem: {e}", self.save_email_setup_btn)
+
 
     def update_order_tree(self):
         for row in self.order_tree.get_children():
@@ -677,6 +1109,16 @@ class Billing:
             total += price
         self.total_price_order.set(f"Total Amount: ₹{total}")
         self.total_item_order.set(f"Total Units: {total_amt}")
+        self.update_generate_bill_button_state()
+
+    def update_generate_bill_button_state(self):
+        if not hasattr(self, "generate_bill"):
+            return
+
+        if self.order_items:
+            self.generate_bill.config(state=NORMAL, bg='#28a745', fg='white')
+        else:
+            self.generate_bill.config(state=DISABLED, bg='#9E9E9E', fg='white')
 
     #--- Remove button Function-----
     def remove_in_tree(self):
@@ -697,6 +1139,11 @@ class Billing:
     #--- Bill Generate Button Function ---
 
     def bill_generating(self):
+        if not self.order_items:
+            self.guarded_showerror("No Order", "Add items to the order before generating a bill.", self.generate_bill)
+            self.update_generate_bill_button_state()
+            return
+
         self.generate_bill.config(state=DISABLED)
         self.window_for_buttons()
         self.clear_second_window()
@@ -809,6 +1256,7 @@ class Billing:
     def set_update_page(self):
         self.clear_page()
         self.set_active_button('update')
+        saved_email, _ = self.get_saved_email_credentials()
 
         self.update_frame = Frame(self.root,bg='white')
         self.update_frame.pack(fill="both", expand=True)
@@ -849,8 +1297,9 @@ class Billing:
         Label(update_email_frame, text="Change Your Account Email: ",
               font=('Arial', 14, 'bold'), bg='white', fg='black').pack(side="left", pady=10, padx=10)
 
-        self.update_email_btn = Button(update_email_frame, text="Update Email", bg='#FFCC00', fg='white',
-                                       font=('Arial', 12, 'bold'), width=15, height=2, command=self.updating_email)
+        email_button_text = "Add Email" if not saved_email else "Update Email"
+        self.update_email_btn = Button(update_email_frame, text=email_button_text, bg='#FFCC00', fg='white',
+                                       font=('Arial', 12, 'bold'), width=15, height=2, command=self.open_email_settings)
         self.update_email_btn.pack(side='left',padx=10, pady=10)
 
         self.four_btn_list = [self.add_item_btn, self.delete_item_btn, self.update_email_btn, self.update_list_btn]
@@ -952,6 +1401,18 @@ class Billing:
                                       width=15, height=2, bg='#3D74B6', fg='white',command=self.deleting_selected_item)
         self.delete_selected_item.pack(padx=10,pady=10)
 
+        self.delete_all_items_btn = Button(
+            name_frame,
+            text="Delete All Items",
+            font=('Arial', 12, 'bold'),
+            width=15,
+            height=2,
+            bg='#B22222',
+            fg='white',
+            command=self.delete_all_items_permanently
+        )
+        self.delete_all_items_btn.pack(padx=10, pady=(0, 10))
+
         self.button_root.protocol("WM_DELETE_WINDOW", close_btn)
         try:
             self.button_root.mainloop()
@@ -960,18 +1421,18 @@ class Billing:
 
     def deleting_selected_item(self):
         def close_btn():
+            try:
+                self.button_root.grab_release()
+            except:
+                pass
             self.button_root.destroy()
             for i in self.four_btn_list:
                 i.config(state=NORMAL)
         item = self.combo_box.get()
 
         if item == "Choose Items" or item == "":
-            showerror("Error", "Select A item to Delete")
-            self.button_root.destroy()
-            self.clear_second_window()
-            self.window_for_buttons()
-            self.button_root.destroy()
-            self.deleteing_items()
+            self.guarded_showerror("Error", "Select A item to Delete", self.delete_selected_item)
+            return
 
         else:
             self.c = self.conn.cursor()
@@ -986,6 +1447,39 @@ class Billing:
                 pass
             close_btn()
         # self.updating_combo()
+
+    def delete_all_items_permanently(self):
+        confirmed = askyesno(
+            "Confirm Delete",
+            "This will permanently delete all items from the menu. Do you want to continue?"
+        )
+
+        if not confirmed:
+            return
+
+        try:
+            self.c = self.conn.cursor()
+            self.c.execute("DELETE FROM menu")
+            self.conn.commit()
+            self.item_menu.clear()
+            self.updated_items.clear()
+            showinfo("Deleted", "All items have been deleted permanently.")
+        except Exception as e:
+            self.guarded_showerror("Delete Error", f"Problem: {e}", self.delete_all_items_btn)
+            return
+
+        try:
+            self.button_root.grab_release()
+        except:
+            pass
+
+        try:
+            self.button_root.destroy()
+        except:
+            pass
+
+        for i in self.four_btn_list:
+            i.config(state=NORMAL)
 
     def update_old_list(self):
         self.window_for_buttons()
@@ -1062,58 +1556,68 @@ class Billing:
             pass
 
     def new_updated_item(self):
-        changed_name = self.updated_name_entry.get()
-        changed_price = self.updated_price_entry.get()
-        selected_item= self.combo_box.get()
+        changed_name = self.updated_name_entry.get().strip()
+        changed_price = self.updated_price_entry.get().strip()
+        selected_item = self.combo_box.get().strip()
 
-        if not selected_item or selected_item == "" or selected_item == "Choose Items":
-            showerror("Error", "Select a Item to Update")
-            self.button_root.destroy()
-            self.clear_second_window()
-            self.window_for_buttons()
-            self.button_root.destroy()
-            self.update_old_list()
+        if not selected_item or selected_item == "Choose Items":
+            self.guarded_showerror("Error", "Select a Item to Update", self.submit_update_btn)
             return
+
+        if not changed_name and not changed_price:
+            self.guarded_showerror("Error", "Enter a new name or price to update", self.submit_update_btn)
+            return
+
         def close_btn():
+            try:
+                self.button_root.grab_release()
+            except:
+                pass
             self.button_root.destroy()
             for i in self.four_btn_list:
                 i.config(state=NORMAL)
 
-        if changed_name:
-            self.c.execute("UPDATE menu SET name = ? WHERE name = ?", (changed_name, selected_item))
+        try:
+            self.c.execute("SELECT price FROM menu WHERE name = ?", (selected_item,))
+            row = self.c.fetchone()
+
+            if not row:
+                self.guarded_showerror("Error", "Selected item not found", self.submit_update_btn)
+                return
+
+            final_name = changed_name if changed_name else selected_item
+            final_price = row[0]
+
+            if changed_price:
+                try:
+                    final_price = int(changed_price)
+                    if final_price <= 0:
+                        self.guarded_showerror("Error", "Price must be greater than 0", self.submit_update_btn)
+                        return
+                except ValueError:
+                    self.guarded_showerror("Error", "Enter a valid numeric price", self.submit_update_btn)
+                    return
+
+            self.c.execute(
+                "UPDATE menu SET name = ?, price = ? WHERE name = ?",
+                (final_name, final_price, selected_item)
+            )
             self.conn.commit()
-        elif not changed_name or changed_name =="":
-            pass
-        try:
-            raw_price = self.c.execute("select price from menu where name = ?", (selected_item,))
-            price = raw_price[0]
-            if changed_name == "" or not changed_name:
-                self.c.execute("UPDATE menu SET price = ? WHERE name = ?", (price, selected_item))
-                self.conn.commit()
-            elif not changed_price or changed_price =="":
-                self.c.execute("UPDATE menu SET price = ? WHERE name = ?", (price, selected_item))
-            else:
-                self.c.execute("UPDATE menu SET price = ? WHERE name = ?", (changed_price, changed_name))
-                self.conn.commit()
 
+            data = self.c.execute('select * from menu')
+            values = data.fetchall()
+            self.item_menu.clear()
+            self.updated_items.clear()
+
+            for name, price in values:
+                self.item_menu[name] = price
+                self.updated_items[name] = price
+
+            self.updating_combo()
+            showinfo("Success", "Item Updated Successfully")
+            close_btn()
         except Exception as e:
-            print(e)
-        data = self.c.execute('select * from menu')
-        values = data.fetchall()
-        self.item_menu.clear()
-        self.updated_items.clear()
-
-        for name, price in values:
-            self.item_menu[name] = price
-        for name, price in values:
-            self.updated_items[name] = price
-        self.updating_combo()
-        showinfo("Success", "Item Updated Successfully")
-        close_btn()
-        try:
-            self.button_root.destroy()
-        except:
-            pass
+            self.guarded_showerror("Update Error", f"Problem: {e}", self.submit_update_btn)
 
 
 
@@ -1186,6 +1690,16 @@ class Billing:
         self.new_mail_entry = ttk.Entry(label2_frame, width=25)
         self.new_mail_entry.pack(side='left', padx=30, pady=10)
 
+        label4_frame = Frame(self.updatingmail_second_frame, bg='#F9F3EF', relief="raised", bd=1)
+        label4_frame.pack(fill='x', padx=10, pady=10)
+
+        self.new_app_password_label = Label(label4_frame, text="New App Password:", font=('Arial', 12, 'bold'), bg='#F9F3EF')
+        self.new_app_password_label.pack(fill='x', side='left', padx=10, pady=10)
+
+        self.new_app_password_entry = ttk.Entry(label4_frame, width=25, show='*')
+        self.new_app_password_entry.pack(side='left', padx=3, pady=10)
+        self.add_password_toggle(label4_frame, self.new_app_password_entry)
+
         self.email_updating_btn = Button(self.updatingmail_second_frame, text="Request OTP", font=('Arial', 12, 'bold'),
                                       width=15, height=2, bg='#0D5EA6', fg='white', command=self.confirm_email_change, state=DISABLED)
         self.email_updating_btn.pack(padx=10, pady=10)
@@ -1201,8 +1715,6 @@ class Billing:
 
         #for adding new item in menu
     def new_item_in_menu(self):
-        for i in self.four_btn_list:
-            i.config(state=NORMAL)
         try:
             self.conn = sqlite3.connect('billing_sft.db')
             self.c = self.conn.cursor()
@@ -1212,31 +1724,21 @@ class Billing:
             item_name = self.add_item_entry.get().strip()
             price_text = self.add_price_entry.get().strip()
             if not item_name:
-                showerror("Error", "Add Name of Item")
-                self.button_root.destroy()
-                self.clear_second_window()
-                self.window_for_buttons()
-                self.button_root.destroy()
-                self.updating_list()
+                self.guarded_showerror("Error", "Add Name of Item", self.submit_add_item)
                 return
 
             if not price_text:
-                showerror("Error", "Add Price of Item")
-                self.button_root.destroy()
-                self.clear_second_window()
-                self.window_for_buttons()
-                self.button_root.destroy()
-                self.updating_list()
+                self.guarded_showerror("Error", "Add Price of Item", self.submit_add_item)
                 return
 
             # --- check price is a number ----
             try:
                 price = int(price_text)
                 if price <= 0:
-                    showerror("Error", "Price is 0")
+                    self.guarded_showerror("Error", "Price is 0", self.submit_add_item)
                     return
             except ValueError:
-                showerror("Error", "Invalid Price")
+                self.guarded_showerror("Error", "Invalid Price", self.submit_add_item)
                 return
 
             # Insert into database
@@ -1262,9 +1764,18 @@ class Billing:
 
 
         except sqlite3.Error as e:
-            showerror("Database Error", f"Database problem: {e}")
+            self.guarded_showerror("Database Error", f"Database problem: {e}", self.submit_add_item)
         except Exception as e:
-            showerror("Adding Error", f"Problem: {e}")
+            self.guarded_showerror("Adding Error", f"Problem: {e}", self.submit_add_item)
+        try:
+            for i in self.four_btn_list:
+                i.config(state=NORMAL)
+        except:
+            pass
+        try:
+            self.button_root.grab_release()
+        except:
+            pass
         try:
             self.button_root.destroy()
         except:
@@ -1284,12 +1795,7 @@ class Billing:
         pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-z]{2,}$'
 
         if not re.match(pattern,email_add) or not email_add:
-            showerror("Not Found", "No Email Address Found! Enter a valid Email")
-            self.button_root.destroy()
-            self.clear_second_window()
-            self.window_for_buttons()
-            self.button_root.destroy()
-            self.updating_email()
+            self.guarded_showerror("Not Found", "No Email Address Found! Enter a valid Email", self.send_new_otp, "Send OTP")
             return
 
         self.c.execute("SELECT email FROM profile")
@@ -1298,12 +1804,7 @@ class Billing:
         if row and row[0]:
             email_value = row[0]
         if email_add != email_value:
-            showerror("Not Found", "Incorrect email! Kindly check your email")
-            self.button_root.destroy()
-            self.clear_second_window()
-            self.window_for_buttons()
-            self.button_root.destroy()
-            self.updating_email()
+            self.guarded_showerror("Not Found", "Incorrect email! Kindly check your email", self.send_new_otp, "Send OTP")
             return
 
         #------- mail structure-------------
@@ -1362,12 +1863,21 @@ class Billing:
         old_mail = self.old_mail_entry.get().strip()
         verify_otp = self.verify_otp_enrty.get().strip()
         self.new_email = self.new_mail_entry.get().strip()
+        new_app_password = self.new_app_password_entry.get().strip()
 
         def close_btn():
+            try:
+                self.button_root.grab_release()
+            except:
+                pass
             self.button_root.destroy()
             try:
                 for i in self.four_btn_list:
                     i.config(state=NORMAL)
+            except:
+                pass
+            try:
+                self.change_email_btn.configure(state=NORMAL)
             except:
                 pass
         def button_back(): #for maintaining the expansion of frame for invalid otp
@@ -1384,6 +1894,11 @@ class Billing:
         if not self.new_email:
             self.new_email_label.config(fg='red')
             self.new_email_label.after(5000, lambda: self.new_email_label.config(fg="black"))
+            return
+
+        if not new_app_password:
+            self.new_app_password_label.config(fg='red')
+            self.new_app_password_label.after(5000, lambda: self.new_app_password_label.config(fg="black"))
             return
 
         if not re.match(pattern,old_mail):
@@ -1406,8 +1921,6 @@ class Billing:
         if old_mail:
             if verify_otp == str(self.otp_number):
                     showinfo("Success", "Your email has been Updated")
-                    print("SUCCESS")
-                    close_btn()
             else:
                 error_text = Label(self.label3_frame,text="* Incorrect OTP",fg='red',bg="#F9F3EF",font=('Arial',12,'bold'))
                 error_text.pack(pady=(10,0))
@@ -1416,7 +1929,6 @@ class Billing:
                 self.email_updating_btn.config(text='Wait',fg='white')
                 self.email_updating_btn.after(1000, button_back)
                 return
-
 
         data = self.c.execute("SELECT email FROM profile")
         row = data.fetchone()
@@ -1428,13 +1940,16 @@ class Billing:
 
         if existing_mail:
             # Update email if already exists
-            self.c.execute("UPDATE profile SET email = ?", (self.new_email,))
+            self.c.execute("UPDATE profile SET email = ?, app_password = ?", (self.new_email, new_app_password))
             self.conn.commit()
         else:
             # Insert new row (if table empty)
-            self.c.execute("INSERT INTO profile ( email) VALUES ( ?)", (self.new_email,))
+            self.c.execute("INSERT INTO profile (email, app_password) VALUES (?, ?)", (self.new_email, new_app_password))
             self.conn.commit()
 
+        self.email = self.new_email
+        self.app_password_value = new_app_password
+        close_btn()
         self.accounts_page()
 
     #-------------- DashBoard Page ----------------#
@@ -1693,8 +2208,11 @@ class Billing:
 
     #---------- send mail for montlhy and daily ---------#
     def sending_sales_track_mail(self,file_path):
-        self.owner_email = "ncerohan@gmail.com"
-        self.app_password = "kxraktkjspeoeyga"
+        self.owner_email, self.app_password = self.get_saved_email_credentials()
+        if not self.owner_email or not self.app_password:
+            showerror("Email Setup Required", "Add your email and app password first.")
+            return
+
         message = EmailMessage()
         message['Subject'] = 'Your Sales Report'
         message['From'] = self.owner_email
@@ -1900,6 +2418,7 @@ class Billing:
         self.clear_page()
         self.set_active_button('account')
         self.calling_profile_variables()
+        saved_email, _ = self.get_saved_email_credentials()
         self.accounts_frame = Frame(self.root, bg='white')
         self.accounts_frame.pack(fill='both', expand=True)
         self.current_widgets.append(self.accounts_frame)
@@ -1979,8 +2498,9 @@ class Billing:
         Label(account_label_frame, text='Your Account', font=('Arial', 14, 'bold'),
               bg='#FAF9F6').pack(side='left', padx=10,pady=10)
 
-        self.change_email_btn = Button(account_label_frame, text="Update Email", bg='#0079FF', fg='white',
-                                      font=('Arial', 12, 'bold'),command=self.updating_email)
+        email_button_text = "Add Email" if not saved_email else "Update Email"
+        self.change_email_btn = Button(account_label_frame, text=email_button_text, bg='#0079FF', fg='white',
+                                      font=('Arial', 12, 'bold'),command=self.open_email_settings)
         self.change_email_btn.pack(side="left", pady=10,padx=20)
 
         self.change_pass_btn = Button(account_label_frame, text="Change Password", bg='#FF0060', fg='white',
@@ -1998,7 +2518,7 @@ class Billing:
         row_count = self.c.fetchone()[0]
 
         if row_count == 0:
-            self.c.execute("INSERT INTO profile (email) VALUES (?)", (None,))
+            self.c.execute("INSERT INTO profile (email, app_password) VALUES (?, ?)", (None, None))
             self.conn.commit()
 
         self.c.execute("SELECT email FROM profile")
@@ -2116,6 +2636,22 @@ class Billing:
         #---------------------------------------------------------#
 
     def change_password(self):
+        try:
+            self.c.execute("SELECT email FROM profile")
+            row = self.c.fetchone()
+            saved_email = row[0] if row and row[0] else None
+        except:
+            saved_email = None
+
+        if not saved_email or str(saved_email).strip() == "" or str(saved_email).strip() == "Not Provided":
+            self.guarded_showerror(
+                "No Email Found",
+                "No email is provided for this account. Please add or update an email first.",
+                getattr(self, "change_pass_btn", None)
+            )
+            return
+
+        self.exist_email = saved_email
         self.window_for_buttons()
         self.clear_second_window()
         #Disable button
@@ -2133,19 +2669,22 @@ class Billing:
         Label(main_frame, text=" * OTP has been sent to your mail kindly verify to proceed futher. ", font=('Times New Romen', 10, 'bold')
               , bg="white", fg='red').pack(fill="x", padx=10, pady=(40,0))
 
-        frame_one = Frame(main_frame, bg='#F9F3EF', relief="raised", bd=2)
-        frame_one.pack(fill='x', padx=10, pady=(70,0))
+        self.verify_pass_frame = Frame(main_frame, bg='#F9F3EF', relief="raised", bd=2)
+        self.verify_pass_frame.pack(fill='x', padx=10, pady=(70,0))
 
-        self.verify_new_pass_label = Label(frame_one, text="Verify OTP : ", font=('Arial', 12, 'bold')
+        self.verify_new_pass_label = Label(self.verify_pass_frame, text="Verify OTP : ", font=('Arial', 12, 'bold')
               , bg="#F9F3EF", fg='black')
         self.verify_new_pass_label.pack(side="left", padx=10, pady=10)
 
-        self.verify_pass_otp = ttk.Entry(frame_one, width=25)
+        self.verify_pass_otp = ttk.Entry(self.verify_pass_frame, width=25)
         self.verify_pass_otp.pack(side='left', padx=8, pady=10)
 
-        self.send_pass_otp = Button(frame_one, text="Verify", font=("Arial", 12, 'bold'), bg='#0D5EA6', fg='white',
+        self.send_pass_otp = Button(self.verify_pass_frame, text="Verify", font=("Arial", 12, 'bold'), bg='#0D5EA6', fg='white',
                                    command=self.verify_pass_change)
         self.send_pass_otp.pack(side="left", pady=10, padx=(30, 0))
+
+        self.pass_otp_status_label = Label(main_frame, text="", font=('Arial', 11, 'bold'), bg="#4A9782", fg='red')
+        self.pass_otp_status_label.pack(fill='x', padx=20, pady=(10, 0))
 
         frame_two = Frame(main_frame, bg='#F9F3EF', relief="raised", bd=2)
         frame_two.pack(fill='x', padx=10, pady=(25,0))
@@ -2154,8 +2693,9 @@ class Billing:
                                     bg="#F9F3EF", fg='red')
         self.new_pass_label.pack(side="left", padx=10, pady=10)
 
-        self.new_pass = ttk.Entry(frame_two, width=25, state=DISABLED)
+        self.new_pass = ttk.Entry(frame_two, width=25, state=DISABLED, show='*')
         self.new_pass.pack(side='left', padx=8, pady=10)
+        self.add_password_toggle(frame_two, self.new_pass)
 
         frame_three = Frame(main_frame, bg='#4A9782')
         frame_three.pack(fill='x', padx=10, pady=(25,0))
@@ -2202,7 +2742,7 @@ class Billing:
             """
 
         self.sending_otp_email() #calling the send mail function
-        self.button_root.protocol("WM_DELETE_WINDOW", self.change_pass_btn.config(state=NORMAL))
+        self.button_root.protocol("WM_DELETE_WINDOW", self.close_popup_window)
         try:
             self.button_root.mainloop()
         except:
@@ -2213,18 +2753,53 @@ class Billing:
     def verify_pass_change(self):
         otp = self.otp_number
         received_otp = self.verify_pass_otp.get().strip()
+
+        if not received_otp:
+            self.pass_otp_status_label.config(text="Incorrect or invalid OTP")
+            self.verify_pass_otp.config(background='red')
+            self.verify_new_pass_label.config(fg='red')
+            return
+
         if otp == received_otp:
-            self.verify_pass_otp.config(background='green')
+            self.pass_otp_status_label.config(text="OTP verified successfully", fg='green')
+            self.verify_pass_otp.config(state=DISABLED)
+            self.send_pass_otp.config(state=DISABLED)
             self.new_pass.config(state=NORMAL)
             self.new_pass_label.config(fg='black')
             self.pass_otp_button.config(state=NORMAL)
+            self.verify_new_pass_label.config(fg='black')
+            self.verify_pass_frame.after(300, self.verify_pass_frame.pack_forget)
         else:
+            self.pass_otp_status_label.config(text="Incorrect or invalid OTP", fg='red')
             self.verify_pass_otp.config(background='red')
             self.verify_new_pass_label.config(fg='red')
         return
 
     def pass_change_verification(self):
-        return
+        new_password = self.new_pass.get().strip()
+
+        if not new_password:
+            self.guarded_showerror("Password Required", "Enter a new password first.", self.pass_otp_button)
+            return
+
+        try:
+            self.c.execute("SELECT COUNT(*) FROM profile")
+            row_count = self.c.fetchone()[0]
+
+            if row_count == 0:
+                self.c.execute(
+                    "INSERT INTO profile (email, app_password, account_password) VALUES (?, ?, ?)",
+                    (self.exist_email if hasattr(self, "exist_email") else None, None, new_password)
+                )
+            else:
+                self.c.execute("UPDATE profile SET account_password = ?", (new_password,))
+
+            self.conn.commit()
+            self.account_login_password = new_password
+            showinfo("Success", "Password updated successfully.")
+            self.close_popup_window()
+        except Exception as e:
+            self.guarded_showerror("Password Error", f"Problem: {e}", self.pass_otp_button)
 
 if __name__ == "__main__":
     app = Billing()

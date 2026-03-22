@@ -1,3 +1,4 @@
+import random
 from email.message import EmailMessage
 from tkinter import *
 from tkinter.messagebox import showerror, showinfo, showwarning
@@ -10,6 +11,7 @@ from fpdf import *
 import smtplib
 import os
 import re
+
 class Billing:
     def __init__(self):
 
@@ -23,12 +25,38 @@ class Billing:
         #for updated item to fetch in combobox
         self.updated_items = {}
 
+        #for date tracking
+        self.daily_track_date = ""
+
         self.init_database()
         self.load_item_menu()
         self.main_window()
         self.navigation_frame()
 
-        self.root.mainloop()
+        try:
+            self.root.mainloop()
+        except:
+            pass
+        #------ profile variables -----#
+        self.shop_name=""
+        self.gst_number=""
+        self.email = ""
+
+    #------- calling profile variables --------#
+    def calling_profile_variables(self):
+        self.c.execute("SELECT shop_name, gst_number, email FROM profile")
+        row = self.c.fetchone()
+
+        if row:  # if there is data
+            name, gst, email = row
+        else:
+            name, gst, email = None, None
+
+        # Assign to variables with fallback
+        self.shop_name = name if name else "Not Provided"
+        self.gst_number = gst if gst else "Not Provided"
+        self.email = email
+
     # --- creating main database ---
     def init_database(self):
         try:
@@ -38,14 +66,44 @@ class Billing:
             #database for main menu
             self.c.execute("create table if not exists menu(name text, price integer)")
             self.c.execute("create table if not exists daily_track(id integer, name text, total_sold integer, unit_price float, total_revenue float)")
+            self.c.execute("create table if not exists monthly_track(rank integer, time text, total_revenue float, top_selling text)")
+            self.c.execute("create table if not exists profile(shop_name text, gst_number text, email text)")
             self.conn.commit()
-
-            # database for daily sales track
-
-            # self.conn.commit()
-
         except Exception as e:
             showerror("Database Error", f"Problem {e}")
+
+
+    #------- OTP GENERATING --------#
+    def otp_generating(self):
+        self.otp_number = str(random.randint(1000,9999))
+
+
+    def otp_expired(self):
+        self.otp_number = None
+    #---------- EMAIl Sending --------#
+    def sending_otp_email(self):
+        sender_email = 'airdropmail919@gmail.com'
+        sender_password = 'ngctzzncsgehzlwb'
+        # to_email = self.old_mail_entry.get().strip()
+
+        # if not to_email:
+        #     showerror("Not Found", "Email Not Found!")
+
+        # Create the email
+        msg = EmailMessage()
+        msg['Subject'] = self.mail_subject
+        msg['From'] = sender_email
+        msg['To'] = self.mail_address
+        msg.set_content(self.html_message)
+        if self.html_message:
+            msg.add_alternative(self.html_message, subtype='html')
+
+        try:
+            with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
+                smtp.login(sender_email, sender_password)
+                smtp.send_message(msg)
+        except Exception as e:
+            print(e)
 
     # --- adding items to menu ---
     def load_item_menu(self):
@@ -128,6 +186,7 @@ class Billing:
                 self.billing_menu_popup.withdraw()
             except:
                 pass
+
         for widget in self.current_widgets:
             try:
                 if widget and widget.winfo_exists:
@@ -135,6 +194,7 @@ class Billing:
             except:
                 pass
         self.current_widgets.clear()
+
 
     #--- Clearing 2nd root windows widgets ---
     def clear_second_window(self):
@@ -151,7 +211,7 @@ class Billing:
         self.button_root = Tk()
         self.button_root.title("Quick SVR")
         self.button_root.config(bg='white')
-        self.button_root.geometry("500x500")
+        self.button_root.geometry("500x600")
 
 
     #------------ BIlling Page Configuration -------------#
@@ -161,50 +221,39 @@ class Billing:
         self.content_frame = Frame(self.root, bg='white')
         self.content_frame.pack(fill='both',expand=True)
         self.current_widgets.append(self.content_frame)
+
         head_frame = Frame(self.content_frame, bg="#9B177E", relief="raised", bd=3)
         head_frame.pack(fill='x', padx=20, pady=10)
 
-        Label(head_frame, text="Quick SVR - Billing System", font=('Arial', 18, 'bold')
-              , bg='#9B177E', fg='white').pack(fill='x', padx=20, pady=10)
+        Label(head_frame, text="Quick SVR - Billing System", font=('Arial', 18, 'bold'),
+              bg='#9B177E', fg='white').pack(fill='x', padx=20, pady=10)
 
-        item_frame = Frame(self.content_frame,bg='#FAF9F6',relief='raised', bd=2)
-        item_frame.pack(fill='x', padx=20,pady=10)
+        item_frame = Frame(self.content_frame, bg='#FAF9F6', relief='raised', bd=2)
+        item_frame.pack(fill='x', padx=20, pady=10)
 
         controls_frame = Frame(item_frame, bg='#FAF9F6')
         controls_frame.pack(fill='x', padx=20, pady=15)
 
-        Label(controls_frame, text='Select Item:', font=('Arial',12),
-              bg='#FAF9F6').pack(side='left',padx=10)
+        Label(controls_frame, text='Select Item:', font=('Arial', 12),
+              bg='#FAF9F6').pack(side='left', padx=10)
 
         self.selected_billing_item = ""
         self.billing_menu_items = []
         self.item_search_var = StringVar()
+
         self.item_search_wrapper = Frame(controls_frame, bg='#FAF9F6')
         self.item_search_wrapper.pack(side='left', padx=10)
-        self.item_search_entry = ttk.Entry(self.item_search_wrapper, width=25, textvariable=self.item_search_var)
+
+        self.item_search_entry = ttk.Entry(
+            self.item_search_wrapper,
+            width=25,
+            textvariable=self.item_search_var
+        )
         self.item_search_entry.pack()
         self.item_search_entry.bind("<KeyRelease>", self.filter_billing_items)
         self.item_search_entry.bind("<Down>", self.focus_billing_menu)
         self.item_search_entry.bind("<Button-1>", self.show_billing_menu)
         self.item_search_entry.bind("<Escape>", self.hide_billing_menu)
-
-        Label(controls_frame, text="Quantity", font=('Arial', 12), bg='#FAF9F6', fg='black'
-              ).pack(side='left',padx=10)
-
-        self.quantity_entry = ttk.Entry(controls_frame, width=15)
-        self.quantity_entry.pack(side='left', padx=10)
-
-        self.add_button = Button(controls_frame, text="Add Item", bg='#A4DD00',fg='white',
-                                 font=('Arial',12,'bold'),command=self.add_to_combo)
-        self.add_button.pack(side='left', padx=10)
-
-        self.remove_button = Button(controls_frame, text="Remove Item", bg='#FF3F33',fg='white',
-                                 font=('Arial',12,'bold'),command=self.remove_in_tree)
-        self.remove_button.pack(side='left',padx=10)
-
-        self.datetime_label = Label(controls_frame, text="", font=('Arial', 12),bg='#FAF9F6',fg='black')
-        self.datetime_label.pack(side='right', padx=10)
-        self.update_datetime()
 
         self.create_billing_menu_popup()
         if not self.billing_menu_global_binding_set:
@@ -213,15 +262,41 @@ class Billing:
 
         self.refresh_billing_item_menu()
 
-        #ORDER TREE MAKING
+        Label(controls_frame, text="Quantity", font=('Arial', 12),
+              bg='#FAF9F6', fg='black').pack(side='left', padx=10)
+
+        self.quantity_entry = ttk.Entry(controls_frame, width=15)
+        self.quantity_entry.pack(side='left', padx=10)
+
+        self.add_button = Button(
+            controls_frame, text="Add Item", bg='#A4DD00', fg='white',
+            font=('Arial', 12, 'bold'), command=self.add_to_combo
+        )
+        self.add_button.pack(side='left', padx=10)
+
+        self.remove_button = Button(
+            controls_frame, text="Remove Item", bg='#FF3F33', fg='white',
+            font=('Arial', 12, 'bold'), command=self.remove_in_tree
+        )
+        self.remove_button.pack(side='left', padx=10)
+
+        self.datetime_label = Label(controls_frame, text="", font=('Arial', 12),
+                                    bg='#FAF9F6', fg='black')
+        self.datetime_label.pack(side='right', padx=10)
+        self.update_datetime()
+
         self.order_frame = Frame(self.content_frame, bg='#FAF9F6', relief='raised', bd=2)
         self.order_frame.pack(fill='both', expand=True, padx=20, pady=10)
 
         self.tree_frame = Frame(self.order_frame, bg='white', relief='raised')
-        self.tree_frame.pack(fill="both", pady=20,padx=10)
+        self.tree_frame.pack(fill="both", pady=20, padx=10)
 
-        self.order_tree = Treeview(self.tree_frame, columns=("Order", "Item", "Quantity", "Price"),
-                                   show="headings", height=18)
+        self.order_tree = Treeview(
+            self.tree_frame,
+            columns=("Order", "Item", "Quantity", "Price"),
+            show="headings",
+            height=18
+        )
 
         self.order_tree.heading("Order", text="Order #")
         self.order_tree.heading("Item", text="Item Name")
@@ -233,13 +308,12 @@ class Billing:
         self.order_tree.column("Quantity", width=100, anchor="center")
         self.order_tree.column("Price", width=100, anchor="center")
 
-        #Scrollbar
         scrollbar = Scrollbar(self.tree_frame, orient="vertical", command=self.order_tree.yview)
         self.order_tree.configure(yscrollcommand=scrollbar.set)
         scrollbar.pack(side="right", fill="y")
         self.order_tree.pack(side="left", fill="both", expand=True)
 
-        totaling_frame = Frame(self.order_frame, bg='#B2BEB5', height=50 )
+        totaling_frame = Frame(self.order_frame, bg='#B2BEB5', height=50)
         totaling_frame.pack(fill='x', padx=10, pady=10)
         totaling_frame.pack_propagate(False)
 
@@ -252,22 +326,23 @@ class Billing:
         Label(totaling_frame, textvariable=self.total_item_order,
               font=('Arial', 14, 'bold'), bg='#B2BEB5', fg='black').pack(side="right", padx=20, pady=10)
 
-        self.button_frame = Frame(self.content_frame, bg='#FAF9F6',relief="raised", bd=2)
+        self.button_frame = Frame(self.content_frame, bg='#FAF9F6', relief="raised", bd=2)
         self.button_frame.pack(fill='x', padx=20, pady=10)
 
-        self.generate_bill = Button(self.button_frame, text='Generate Bill', font=('Arial',12, 'bold'),
-               width=15, height=2, bg='#28a745',fg='white', command=self.bill_generating)
-        self.generate_bill.pack(side='right',padx=10,pady=10)
+        self.generate_bill = Button(self.button_frame, text='Generate Bill', font=('Arial', 12, 'bold'),
+                                    width=15, height=2, bg='#28a745', fg='white', command=self.bill_generating)
+        self.generate_bill.pack(side='right', padx=10, pady=10)
 
-        self.clear_btn = Button(self.button_frame, text="Clear All", font=('Arial',12, 'bold'),
-               width=15, height=2, bg='#ffc107',fg='white',command=self.clear_tree)
-        self.clear_btn.pack(side='right',padx=10,pady=10)
+        self.clear_btn = Button(self.button_frame, text="Clear All", font=('Arial', 12, 'bold'),
+                                width=15, height=2, bg='#ffc107', fg='white', command=self.clear_tree)
+        self.clear_btn.pack(side='right', padx=10, pady=10)
 
-        self.sale_btn = Button(self.button_frame, text="Toady's Sale", font=('Arial',12, 'bold'),
-               width=15, height=2, bg='#17a2b8',fg='white', command=self.dashboard_page)
-        self.sale_btn.pack(side='right',padx=10,pady=10)
+        self.sale_btn = Button(self.button_frame, text="Toady's Sale", font=('Arial', 12, 'bold'),
+                               width=15, height=2, bg='#17a2b8', fg='white', command=self.dashboard_page)
+        self.sale_btn.pack(side='right', padx=10, pady=10)
 
         self.clear_tree()
+
 
     #pdf making-----------#
     def generate_bill_pdf(self):
@@ -280,17 +355,18 @@ class Billing:
             customer_name = "Walk-In Customer"
 
         #pattern to get a proper email format .gmail,hotmail,yahoo,domainname
+
         pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-z]{2,}$'
 
-        # if not re.match(pattern, customer_email) or not customer_email:
-        #     showerror("Error", "Incorrect email format!")
-        #     self.button_root.destroy()
-        #     self.clear_second_window()
-        #     self.window_for_buttons()
-        #     self.single_order_emailing()
-        #     return
+        if not re.match(pattern, customer_email) or not customer_email:
+            showerror("Error", "Incorrect email format!")
+            self.button_root.destroy()
+            self.clear_second_window()
+            self.window_for_buttons()
+            self.single_order_emailing()
+            return
 
-        timestamp = datetime.now().strftime("%Y-%m-%d_%I-%M-%S_%p")
+        timestamp = datetime.now().strftime("%A_%I_%M_%S_%p")
         table_data  = self.order_tree.get_children()
         if not table_data:
             showerror("Error","No Order Placed yet")
@@ -300,13 +376,17 @@ class Billing:
             self.single_order_emailing()
             return
 
+
         # Safe filename using customer name + timestamp
         safe_customer_name =customer_name.strip().replace(" ", "_")
         filename = f"{safe_customer_name}_{timestamp}.pdf"
 
+
         # Save to Desktop
         desktop_path = os.path.join(os.path.expanduser("~"), "Desktop")
-        full_path = os.path.join(desktop_path, filename)
+        path = os.path.join(desktop_path, 'Quick SVR', 'Customer Bills')
+        os.makedirs(path, exist_ok=True)
+        full_path = os.path.join(desktop_path, path, filename)
         # Title
         pdf.set_font("Arial", 'B', 16)
         pdf.cell(0, 10, "RESTAURANT BILL", ln=True, align='C')
@@ -316,6 +396,7 @@ class Billing:
         pdf.set_font("Arial", '', 12)
         date_str = datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
         pdf.cell(0, 10, f"Customer: {customer_name}", ln=True)
+        pdf.cell(0, 10, f"Customer Email: {customer_email}", ln=True)
         pdf.cell(0, 10, f"Date: {date_str}", ln=True)
         pdf.ln(5)
 
@@ -380,10 +461,13 @@ class Billing:
 
         message.add_attachment(file_data, maintype='application', subtype='pdf', filename=file_name)
 
-        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
-            smtp.login(self.owner_email, self.app_password)
-            smtp.send_message(message)
-        showinfo("Success","Email send successfully")
+        try:
+            with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
+                smtp.login(self.owner_email, self.app_password)
+                smtp.send_message(message)
+            showinfo("Success", "Email send successfully")
+        except:
+            showerror("No Connection Found", "Kindly check your Internet Connection!")
 
         self.button_root.protocol("WM_DELETE_WINDOW", close_btn)
         close_btn()
@@ -395,43 +479,192 @@ class Billing:
     def add_to_combo(self):
         item = self.get_selected_billing_item()
         quantity = self.quantity_entry.get()
+
         if item == "":
             showerror("ERROR", "SELECT MENU ITEMS")
             return
+
         if not quantity.isdigit():
             showerror("Error", "Enter a valid Quantity")
             return
+
         try:
             quantity = int(quantity)
             if quantity <= 0:
                 quantity = 1
-            int(quantity)
 
-            if isinstance(quantity, int):
-                unit_price = self.updated_items[item]
-                existing_item = False
+            unit_price = self.updated_items[item]
+            item_found = False
 
-                for order_item in self.order_items:
-                    if order_item[0] == item:
-                        order_item[1] += quantity
-                        order_item[2] = unit_price * order_item[1]
-                        existing_item = True
-                        break
+            for order in self.order_items:
+                if order[0] == item:
+                    order[1] += quantity
+                    order[2] = order[1] * unit_price
+                    item_found = True
+                    break
 
-                if not existing_item:
-                    price = unit_price * quantity
-                    self.order_items.append([item, quantity, price])
+            if not item_found:
+                total_price = unit_price * quantity
+                self.order_items.append([item, quantity, total_price])
 
-                self.update_order_tree()
-            else:
-                showerror("Error", "Please Enter Quantity")
+            self.update_order_tree()
+
         except Exception as e:
-            pass
+            print(e)
+
         self.quantity_entry.delete(0, END)
         self.selected_billing_item = ""
         self.item_search_var.set("")
         self.refresh_billing_item_menu()
         self.hide_billing_menu()
+
+    def create_billing_menu_popup(self):
+        self.billing_menu_popup = Toplevel(self.root)
+        self.billing_menu_popup.withdraw()
+        self.billing_menu_popup.overrideredirect(True)
+        self.billing_menu_popup.transient(self.root)
+        self.billing_menu_popup.configure(bg='white')
+
+        popup_frame = Frame(self.billing_menu_popup, bg='white', relief='solid', bd=1)
+        popup_frame.pack(fill='both', expand=True)
+
+        self.billing_menu_scrollbar = Scrollbar(popup_frame, orient='vertical')
+        self.billing_item_listbox = Listbox(
+            popup_frame,
+            height=6,
+            width=32,
+            font=('Arial', 10),
+            exportselection=False,
+            activestyle='none',
+            yscrollcommand=self.billing_menu_scrollbar.set
+        )
+        self.billing_menu_scrollbar.config(command=self.billing_item_listbox.yview)
+
+        self.billing_item_listbox.pack(side='left', fill='both', expand=True)
+        self.billing_menu_scrollbar.pack(side='right', fill='y')
+
+        self.billing_item_listbox.bind("<<ListboxSelect>>", self.select_billing_menu_item)
+        self.billing_item_listbox.bind("<Double-Button-1>", self.select_billing_menu_item)
+        self.billing_item_listbox.bind("<Return>", self.select_billing_menu_item)
+        self.billing_item_listbox.bind("<Escape>", self.hide_billing_menu)
+
+    def refresh_billing_item_menu(self, search_text=""):
+        if not hasattr(self, "billing_item_listbox"):
+            return
+
+        search_value = search_text.strip().lower()
+        self.billing_menu_items = []
+        self.billing_item_listbox.delete(0, END)
+
+        for item_name, price in self.updated_items.items():
+            if search_value and search_value not in item_name.lower():
+                continue
+            self.billing_menu_items.append(item_name)
+            self.billing_item_listbox.insert(END, f"{item_name} - ₹{price}")
+
+        if self.billing_menu_items:
+            self.billing_item_listbox.selection_clear(0, END)
+            self.billing_item_listbox.selection_set(0)
+        else:
+            self.selected_billing_item = ""
+            self.hide_billing_menu()
+
+    def filter_billing_items(self, event=None):
+        self.selected_billing_item = ""
+        self.refresh_billing_item_menu(self.item_search_var.get())
+        if self.billing_menu_items:
+            self.show_billing_menu()
+
+    def select_billing_menu_item(self, event=None):
+        selection = self.billing_item_listbox.curselection()
+        if not selection:
+            return
+
+        item_name = self.billing_menu_items[selection[0]]
+        self.selected_billing_item = item_name
+        self.item_search_var.set(item_name)
+        self.item_search_entry.icursor(END)
+        self.hide_billing_menu()
+        self.quantity_entry.focus_set()
+
+    def focus_billing_menu(self, event=None):
+        if not self.billing_menu_items:
+            return "break"
+
+        self.show_billing_menu()
+        self.billing_item_listbox.focus_set()
+        self.billing_item_listbox.selection_clear(0, END)
+        self.billing_item_listbox.selection_set(0)
+        return "break"
+
+    def show_billing_menu(self, event=None):
+        if not hasattr(self, "billing_menu_popup"):
+            return
+
+        if not self.billing_menu_items:
+            self.refresh_billing_item_menu(self.item_search_var.get())
+
+        if not self.billing_menu_items:
+            return
+
+        self.root.update_idletasks()
+        x = self.item_search_entry.winfo_rootx()
+        y = self.item_search_entry.winfo_rooty() + self.item_search_entry.winfo_height() + 2
+        width = max(self.item_search_entry.winfo_width(), 260)
+        height = min(len(self.billing_menu_items), 6) * 24 + 6
+
+        self.billing_menu_popup.geometry(f"{width}x{height}+{x}+{y}")
+        self.billing_menu_popup.deiconify()
+        self.billing_menu_popup.lift()
+
+    def hide_billing_menu(self, event=None):
+        if hasattr(self, "billing_menu_popup"):
+            self.billing_menu_popup.withdraw()
+        return "break" if event else None
+
+    def handle_global_billing_click(self, event):
+        if not hasattr(self, "billing_menu_popup"):
+            return
+
+        clicked_widget = event.widget
+        if self.is_billing_menu_widget(clicked_widget):
+            return
+
+        self.hide_billing_menu()
+
+    def is_billing_menu_widget(self, widget):
+        billing_widgets = {
+            self.item_search_entry,
+            self.item_search_wrapper,
+            self.billing_item_listbox,
+            self.billing_menu_scrollbar,
+            self.billing_menu_popup,
+        }
+
+        current_widget = widget
+        while current_widget is not None:
+            if current_widget in billing_widgets:
+                return True
+            current_widget = getattr(current_widget, "master", None)
+
+        return False
+
+    def get_selected_billing_item(self):
+        typed_item = self.item_search_var.get().strip()
+
+        if typed_item in self.updated_items:
+            self.selected_billing_item = typed_item
+            return typed_item
+
+        if self.selected_billing_item in self.updated_items:
+            return self.selected_billing_item
+
+        return ""
+
+    def updating_combo(self):
+        self.combo_box['values'] = list(self.updated_items.keys())
+        self.combo_box.set("Choose Items")
+
 
     def update_order_tree(self):
         for row in self.order_tree.get_children():
@@ -639,7 +872,7 @@ class Billing:
             for i in self.four_btn_list:
                 i.config(state=NORMAL)
 
-        main_frame = Frame(self.button_root, bg="#FFEAD8")
+        main_frame = Frame(self.button_root, bg="#4A9782")
         main_frame.pack(fill='both', padx=10,pady=10,expand=True)
         self.current_second_button.append(main_frame)
 
@@ -667,11 +900,13 @@ class Billing:
         self.add_price_entry.pack(side="left", padx=45, pady=10)
 
         self.submit_add_item = Button(name_frame, text="Submit",font=('Arial', 12, 'bold'),
-                                      width=15, height=2, bg='#46edc8', fg='white',command=self.new_item_in_menu)
+                                      width=15, height=2, bg='#3D74B6', fg='white',command=self.new_item_in_menu)
         self.submit_add_item.pack(padx=10,pady=10)
         self.button_root.protocol("WM_DELETE_WINDOW", close_btn)
-
-        self.button_root.mainloop()
+        try:
+            self.button_root.mainloop()
+        except:
+            pass
 
     # --- Delete Item from List ---
     def deleteing_items(self):
@@ -693,7 +928,7 @@ class Billing:
             for i in self.four_btn_list:
                 i.config(state=NORMAL)
 
-        main_frame = Frame(self.button_root, bg="#FFEAD8")
+        main_frame = Frame(self.button_root, bg="#4A9782")
         main_frame.pack(fill='both', padx=10, pady=10, expand=True)
         self.current_second_button.append(main_frame)
 
@@ -707,18 +942,21 @@ class Billing:
         Label(item_frame, text='Select Item:', font=('Arial', 12),
               bg='#FAF9F6').pack(side='left', padx=10)
 
-        self.combo_box = Combobox(item_frame, values=list(self.item_menu.keys()), width=25, font=('Arial', 10))
+        self.combo_box = Combobox(item_frame, values=list(self.item_menu.keys()), width=25, font=('Arial', 10), state='readonly')
         self.combo_box['values'] = list(self.item_menu.keys())  # Set full item list
         self.combo_box.set("Choose Items")
         self.combo_box.pack(side='left', padx=10)
         self.updating_combo()
 
         self.delete_selected_item = Button(name_frame, text="Submit",font=('Arial', 12, 'bold'),
-                                      width=15, height=2, bg='#46edc8', fg='white',command=self.deleting_selected_item)
+                                      width=15, height=2, bg='#3D74B6', fg='white',command=self.deleting_selected_item)
         self.delete_selected_item.pack(padx=10,pady=10)
 
         self.button_root.protocol("WM_DELETE_WINDOW", close_btn)
-        self.button_root.mainloop()
+        try:
+            self.button_root.mainloop()
+        except:
+            pass
 
     def deleting_selected_item(self):
         def close_btn():
@@ -729,6 +967,11 @@ class Billing:
 
         if item == "Choose Items" or item == "":
             showerror("Error", "Select A item to Delete")
+            self.button_root.destroy()
+            self.clear_second_window()
+            self.window_for_buttons()
+            self.button_root.destroy()
+            self.deleteing_items()
 
         else:
             self.c = self.conn.cursor()
@@ -764,7 +1007,7 @@ class Billing:
             self.price_entry.config(text=data)
 
 
-        main_frame = Frame(self.button_root, bg="#FFEAD8")
+        main_frame = Frame(self.button_root, bg="#4A9782")
         main_frame.pack(fill='both', padx=10, pady=10, expand=True)
         self.current_second_button.append(main_frame)
 
@@ -777,12 +1020,12 @@ class Billing:
         Label(choose_frame, text="Choose item ", font=('Arial', 12, 'bold')
               , bg="#F9F3EF", fg='black').pack(side="left", fill='x',padx=10, pady=10)
 
-        Label(choose_frame, text="Price ", font=('Arial', 12, 'bold')
+        Label(choose_frame, text="Current Price ", font=('Arial', 12, 'bold')
               , bg="#F9F3EF", fg='black').pack(side="right",fill='x', padx=30, pady=10)
 
         first_frame = Frame(second_frame,bg='#F9F3EF')
         first_frame.pack(fill='x',pady=(0,10))
-        self.combo_box = Combobox(first_frame, width=25, font=('Arial', 10),values=list(self.item_menu.keys()))
+        self.combo_box = Combobox(first_frame, width=25, font=('Arial', 10),values=list(self.item_menu.keys()), state='readonly')
         self.combo_box.pack(side='left', padx=20)
         self.combo_box.bind("<<ComboboxSelected>>", function_to_run)
         self.updating_combo()
@@ -809,24 +1052,69 @@ class Billing:
         self.updated_price_entry.pack(side="left", padx=10, pady=10)
 
         self.submit_update_btn = Button(second_frame, text="Update", font=('Arial', 12, 'bold'),
-                                      width=15, height=2, bg='#46edc8', fg='white', command=self.new_updated_item)
+                                      width=15, height=2, bg='#3D74B6', fg='white', command=self.new_updated_item)
         self.submit_update_btn.pack(padx=10, pady=10)
         self.button_root.protocol("WM_DELETE_WINDOW", close_btn)
-        self.button_root.mainloop()
+        self.button_root.update()
+        try:
+            self.button_root.mainloop()
+        except:
+            pass
 
     def new_updated_item(self):
         changed_name = self.updated_name_entry.get()
         changed_price = self.updated_price_entry.get()
         selected_item= self.combo_box.get()
 
-        self.c.execute("UPDATE menu SET name = ? WHERE name = ?", (changed_name, selected_item))
-        self.conn.commit()
-        try:
-            self.c.execute("UPDATE menu SET price = ? WHERE name = ?", (changed_price, changed_name))
+        if not selected_item or selected_item == "" or selected_item == "Choose Items":
+            showerror("Error", "Select a Item to Update")
+            self.button_root.destroy()
+            self.clear_second_window()
+            self.window_for_buttons()
+            self.button_root.destroy()
+            self.update_old_list()
+            return
+        def close_btn():
+            self.button_root.destroy()
+            for i in self.four_btn_list:
+                i.config(state=NORMAL)
+
+        if changed_name:
+            self.c.execute("UPDATE menu SET name = ? WHERE name = ?", (changed_name, selected_item))
             self.conn.commit()
+        elif not changed_name or changed_name =="":
+            pass
+        try:
+            raw_price = self.c.execute("select price from menu where name = ?", (selected_item,))
+            price = raw_price[0]
+            if changed_name == "" or not changed_name:
+                self.c.execute("UPDATE menu SET price = ? WHERE name = ?", (price, selected_item))
+                self.conn.commit()
+            elif not changed_price or changed_price =="":
+                self.c.execute("UPDATE menu SET price = ? WHERE name = ?", (price, selected_item))
+            else:
+                self.c.execute("UPDATE menu SET price = ? WHERE name = ?", (changed_price, changed_name))
+                self.conn.commit()
+
         except Exception as e:
             print(e)
+        data = self.c.execute('select * from menu')
+        values = data.fetchall()
+        self.item_menu.clear()
+        self.updated_items.clear()
+
+        for name, price in values:
+            self.item_menu[name] = price
+        for name, price in values:
+            self.updated_items[name] = price
         self.updating_combo()
+        showinfo("Success", "Item Updated Successfully")
+        close_btn()
+        try:
+            self.button_root.destroy()
+        except:
+            pass
+
 
 
     def updating_email(self):
@@ -845,12 +1133,12 @@ class Billing:
         except:
             pass
 
-
         def close_btn():
-            self.button_root.destroy()
             try:
+                self.button_root.destroy()
                 for i in self.four_btn_list:
                     i.config(state=NORMAL)
+
             except:
                 pass
 
@@ -860,48 +1148,53 @@ class Billing:
             except:
                 pass
 
-        main_frame = Frame(self.button_root, bg="#FFEAD8")
-        main_frame.pack(fill='both', padx=10, pady=10, expand=True)
-        self.current_second_button.append(main_frame)
+        self.updating_main_frame = Frame(self.button_root, bg="#4A9782")
+        self.updating_main_frame.pack(fill='both', padx=10, pady=10, expand=True)
+        self.current_second_button.append(self.updating_main_frame)
 
-        second_frame = Frame(main_frame, bg='#FFEAD8',relief="raised", bd=1)
-        second_frame.pack(fill="both",padx=10,pady=100)
+        self.updatingmail_second_frame = Frame(self.updating_main_frame, bg='#F9F3EF',relief="raised", bd=1)
+        self.updatingmail_second_frame.pack(fill="both",padx=10,pady=100)
 
-        label_frame = Frame(second_frame, bg='#EAD8A4',relief="raised", bd=1)
+        label_frame = Frame(self.updatingmail_second_frame, bg='#F9F3EF',relief="raised", bd=1)
         label_frame.pack(fill='x',padx=10,pady=10)
 
-        email_label = Label(label_frame, text="Current Email:",font=('Arial',12,'bold'),bg='#EAD8A4')
-        email_label.pack(fill='x',side='left',padx=10, pady=10)
+        self.old_email_label = Label(label_frame, text="Current Email:",font=('Arial',12,'bold'),bg='#F9F3EF')
+        self.old_email_label.pack(fill='x',side='left',padx=10, pady=10)
 
         self.old_mail_entry = ttk.Entry(label_frame,width=25)
         self.old_mail_entry.pack(side='left',padx=8, pady=10)
 
-        label2_frame = Frame(second_frame, bg='#EAD8A4', relief="raised", bd=1)
+        self.send_new_otp = Button(label_frame, text="Send OTP", font=("Arial", 12, 'bold'), bg='#0D5EA6', fg='white',
+                                   command=self.send_otp_newmail)
+        self.send_new_otp.pack(side="left", pady=10,padx=(30,0))
+
+        self.label3_frame = Frame(self.updatingmail_second_frame, bg='#F9F3EF', relief="raised", bd=1)
+        self.label3_frame.pack(fill='x', padx=10, pady=10)
+
+        self.verify_otp_label = (Label(self.label3_frame, text="Verify OTP: ", font=('Arial', 12, 'bold'), bg='#F9F3EF'))
+        self.verify_otp_label.pack(fill='x', side='left', padx=10, pady=10)
+
+        self.verify_otp_enrty = ttk.Entry(self.label3_frame, width=25, state=DISABLED)
+        self.verify_otp_enrty.pack(side='left', padx=(30,0), pady=10)
+
+        label2_frame = Frame(self.updatingmail_second_frame, bg='#F9F3EF', relief="raised", bd=1)
         label2_frame.pack(fill='x', padx=10, pady=10)
 
-        email_label = Label(label2_frame, text="New Email:", font=('Arial', 12, 'bold'), bg='#EAD8A4')
-        email_label.pack(fill='x', side='left', padx=10, pady=10)
+        self.new_email_label = Label(label2_frame, text="New Email:", font=('Arial', 12, 'bold'), bg='#F9F3EF')
+        self.new_email_label.pack(fill='x', side='left', padx=10, pady=10)
 
         self.new_mail_entry = ttk.Entry(label2_frame, width=25)
         self.new_mail_entry.pack(side='left', padx=30, pady=10)
 
-        self.send_otp_new = Button(label2_frame, text="Send OTP", font=("Arial", 12, 'bold'), bg='#28a745', fg='white',command=self.send_otp_newmail)
-        self.send_otp_new.pack(side="left" , pady=10)
-
-        label3_frame = Frame(second_frame, bg='#EAD8A4', relief="raised", bd=1)
-        label3_frame.pack(fill='x', padx=10, pady=10)
-
-        Label(label3_frame, text="Verify OTP: ", font=('Arial', 12, 'bold'), bg='#EAD8A4').pack(fill='x', side='left', padx=10, pady=10)
-
-        self.verify_otp_enrty = ttk.Entry(label3_frame, width=25)
-        self.verify_otp_enrty.pack(side='left', padx=30, pady=10)
-
-        self.email_updating_btn = Button(second_frame, text="Update", font=('Arial', 12, 'bold'),
-                                      width=15, height=2, bg='#46edc8', fg='white')
+        self.email_updating_btn = Button(self.updatingmail_second_frame, text="Request OTP", font=('Arial', 12, 'bold'),
+                                      width=15, height=2, bg='#0D5EA6', fg='white', command=self.confirm_email_change, state=DISABLED)
         self.email_updating_btn.pack(padx=10, pady=10)
 
         self.button_root.protocol("WM_DELETE_WINDOW", close_btn)
-        self.button_root.mainloop()
+        try:
+            self.button_root.mainloop()
+        except:
+            pass
 
 
     #------------ Sub Buttons of the 4 buttons of updata pages ----------
@@ -915,16 +1208,26 @@ class Billing:
             self.c = self.conn.cursor()
             self.c.execute("create table if not exists menu(name text, price integer)")
 
-        # --- check add info is avalilable ---10.
+        # --- check add info is avalilable ---#.
             item_name = self.add_item_entry.get().strip()
+            price_text = self.add_price_entry.get().strip()
             if not item_name:
                 showerror("Error", "Add Name of Item")
-                return  # Important: return to stop execution
+                self.button_root.destroy()
+                self.clear_second_window()
+                self.window_for_buttons()
+                self.button_root.destroy()
+                self.updating_list()
+                return
 
-            price_text = self.add_price_entry.get().strip()
             if not price_text:
                 showerror("Error", "Add Price of Item")
-                return  # Important: return to stop execution
+                self.button_root.destroy()
+                self.clear_second_window()
+                self.window_for_buttons()
+                self.button_root.destroy()
+                self.updating_list()
+                return
 
             # --- check price is a number ----
             try:
@@ -953,7 +1256,6 @@ class Billing:
                     self.c.execute('insert into menu(name, price) values(?,?)', (item_name, item_price) )
                     self.conn.commit()
 
-
             # --- clear entries ---
             self.add_item_entry.delete(0, 'end')
             self.add_price_entry.delete(0, 'end')
@@ -963,156 +1265,177 @@ class Billing:
             showerror("Database Error", f"Database problem: {e}")
         except Exception as e:
             showerror("Adding Error", f"Problem: {e}")
-        finally:
-            # Always close connections
-            # if hasattr(self, 'c') and self.c:
-            #     self.c.close()
-            # if hasattr(self, 'conn') and self.conn:
-            #     self.conn.close()
+        try:
             self.button_root.destroy()
+        except:
+            pass
+
 
     def updating_combo(self):
         self.combo_box['values'] = list(self.updated_items.keys())
         self.combo_box.set("Choose Items")
 
-    def refresh_billing_item_menu(self, search_text=""):
-        if not hasattr(self, "billing_item_listbox"):
-            return
 
-        search_value = search_text.strip().lower()
-        self.billing_menu_items = []
-        self.billing_item_listbox.delete(0, END)
-
-        for item_name, price in self.updated_items.items():
-            if search_value and search_value not in item_name.lower():
-                continue
-            self.billing_menu_items.append(item_name)
-            self.billing_item_listbox.insert(END, f"{item_name} - ₹{price}")
-
-        if self.billing_menu_items:
-            self.billing_item_listbox.selection_clear(0, END)
-            self.billing_item_listbox.selection_set(0)
-            self.show_billing_menu()
-        else:
-            self.selected_billing_item = ""
-            self.hide_billing_menu()
-
-    def filter_billing_items(self, event=None):
-        search_text = self.item_search_var.get()
-        self.selected_billing_item = ""
-        self.refresh_billing_item_menu(search_text)
-
-    def select_billing_menu_item(self, event=None):
-        selection = self.billing_item_listbox.curselection()
-        if not selection:
-            return
-
-        item_name = self.billing_menu_items[selection[0]]
-        self.selected_billing_item = item_name
-        self.item_search_var.set(item_name)
-        self.item_search_entry.icursor(END)
-        self.hide_billing_menu()
-        self.quantity_entry.focus_set()
-
-    def focus_billing_menu(self, event=None):
-        if self.billing_item_listbox.size() == 0:
-            return "break"
-
-        self.show_billing_menu()
-        self.billing_item_listbox.focus_set()
-        self.billing_item_listbox.selection_clear(0, END)
-        self.billing_item_listbox.selection_set(0)
-        return "break"
-
-    def show_billing_menu(self, event=None):
-        if not hasattr(self, "billing_menu_popup") or not self.billing_menu_items:
-            return
-
-        self.root.update_idletasks()
-        x = self.item_search_entry.winfo_rootx()
-        y = self.item_search_entry.winfo_rooty() + self.item_search_entry.winfo_height() + 2
-        width = max(self.item_search_entry.winfo_width(), 260)
-        height = min(max(len(self.billing_menu_items), 1), 6) * 24 + 4
-
-        self.billing_menu_popup.geometry(f"{width}x{height}+{x}+{y}")
-        self.billing_menu_popup.deiconify()
-        self.billing_menu_popup.lift()
-
-    def hide_billing_menu(self, event=None):
-        if hasattr(self, "billing_menu_popup"):
-            self.billing_menu_popup.withdraw()
-        return "break" if event else None
-
-    def create_billing_menu_popup(self):
-        self.billing_menu_popup = Toplevel(self.root)
-        self.billing_menu_popup.withdraw()
-        self.billing_menu_popup.overrideredirect(True)
-        self.billing_menu_popup.transient(self.root)
-        self.billing_menu_popup.configure(bg='white')
-
-        popup_frame = Frame(self.billing_menu_popup, bg='white', relief='solid', bd=1)
-        popup_frame.pack(fill='both', expand=True)
-
-        self.billing_menu_scrollbar = Scrollbar(popup_frame, orient='vertical')
-        self.billing_item_listbox = Listbox(
-            popup_frame,
-            height=6,
-            width=32,
-            font=('Arial', 10),
-            exportselection=False,
-            activestyle='none',
-            yscrollcommand=self.billing_menu_scrollbar.set
-        )
-        self.billing_menu_scrollbar.config(command=self.billing_item_listbox.yview)
-        self.billing_item_listbox.pack(side='left', fill='both', expand=True)
-        self.billing_menu_scrollbar.pack(side='right', fill='y')
-        self.billing_item_listbox.bind("<<ListboxSelect>>", self.select_billing_menu_item)
-        self.billing_item_listbox.bind("<Double-Button-1>", self.select_billing_menu_item)
-        self.billing_item_listbox.bind("<Return>", self.select_billing_menu_item)
-        self.billing_item_listbox.bind("<Escape>", self.hide_billing_menu)
-
-    def handle_global_billing_click(self, event):
-        if not hasattr(self, "billing_menu_popup") or not self.billing_menu_popup.winfo_exists():
-            return
-
-        clicked_widget = event.widget
-        if self.is_billing_menu_widget(clicked_widget):
-            return
-
-        self.hide_billing_menu()
-
-    def is_billing_menu_widget(self, widget):
-        billing_widgets = {
-            self.item_search_entry,
-            self.item_search_wrapper,
-            self.billing_item_listbox,
-            self.billing_menu_scrollbar,
-            self.billing_menu_popup,
-        }
-
-        current_widget = widget
-        while current_widget is not None:
-            if current_widget in billing_widgets:
-                return True
-            current_widget = getattr(current_widget, "master", None)
-
-        return False
-
-    def get_selected_billing_item(self):
-        typed_item = self.item_search_var.get().strip()
-        if typed_item in self.updated_items:
-            self.selected_billing_item = typed_item
-            return typed_item
-
-        if self.selected_billing_item in self.updated_items:
-            return self.selected_billing_item
-
-        return ""
-
-
-    #for sending OTP for email verification
+    #-------------- for sending OTP for email verification ---------------#
     def send_otp_newmail(self):
-        return
+        self.email_updating_btn.config(state=NORMAL, text="Update")
+        email_add = self.old_mail_entry.get().strip()
+        email_value = "" #verifying email exists or not
+        pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-z]{2,}$'
+
+        if not re.match(pattern,email_add) or not email_add:
+            showerror("Not Found", "No Email Address Found! Enter a valid Email")
+            self.button_root.destroy()
+            self.clear_second_window()
+            self.window_for_buttons()
+            self.button_root.destroy()
+            self.updating_email()
+            return
+
+        self.c.execute("SELECT email FROM profile")
+        row = self.c.fetchone()
+
+        if row and row[0]:
+            email_value = row[0]
+        if email_add != email_value:
+            showerror("Not Found", "Incorrect email! Kindly check your email")
+            self.button_root.destroy()
+            self.clear_second_window()
+            self.window_for_buttons()
+            self.button_root.destroy()
+            self.updating_email()
+            return
+
+        #------- mail structure-------------
+        self.mail_subject = 'Confirm Your Email Change Request'
+        self.mail_address = self.old_mail_entry.get().strip()
+
+        self.send_new_otp.config(text="Sent (✓)",bg='#ADE4DB',state=DISABLED)
+        self.otp_generating()
+        self.pass_change_message = (f"Hello,\n\n"
+                                    f"We received a request to change the email address linked to your account.\n\n"
+                                    f"Please use the One-Time Password (OTP) below to confirm this change:\n\n"
+                                    f"Your OTP: {self.otp_number} \n\n"
+                                    f"This code will expire in 5 minutes. If you did not request this change, please ignore this email or contact our support team immediately. \n"
+                                    f"Best regards, \n"
+                                    f"Quick SVR Team")
+
+        self.html_message =f"""
+<div style="font-family:Arial,Helvetica,sans-serif; max-width:600px; margin:auto; padding:20px; 
+            background:#f9f9f9; border:1px solid #ddd; border-radius:12px;">
+
+  <!-- Header -->
+  <div style="background:#6C63FF; color:#fff; padding:15px; text-align:center; border-radius:10px 10px 0 0;">
+    <h2 style="margin:0;">Quick SVR Security</h2>
+  </div>
+
+  <!-- Body -->
+  <div style="padding:20px; color:#333;">
+    <p>Hello,</p>
+    <p>We received a request to <b>change the email address</b> linked to your account.</p>
+    <p>Please use the One-Time Password (OTP) below to confirm this change:</p>
+
+    <!-- OTP Box -->
+    <div style="font-size:36px; font-weight:bold; color:#6C63FF; background:#fff; 
+                border:2px dashed #6C63FF; border-radius:10px; 
+                text-align:center; padding:15px; margin:25px 0;">
+      {self.otp_number}
+    </div>
+
+    <p style="color:#555;">This code will expire in <b>5 minutes</b>. 
+    If you did not request this change, please ignore this email or contact our support team immediately.</p>
+  </div>
+
+  <!-- Footer -->
+  <div style="background:#f1f1f1; padding:12px; text-align:center; font-size:12px; color:#777; border-radius:0 0 10px 10px;">
+    <p>Best regards,<br><b>Quick SVR Team</b></p>
+  </div>
+</div>
+"""
+        self.sending_otp_email()
+        if self.verify_otp_enrty:
+            self.verify_otp_enrty.config(state=NORMAL)
+
+
+    # -------------- Confirm Email Change ----------------#
+    def confirm_email_change(self):
+        old_mail = self.old_mail_entry.get().strip()
+        verify_otp = self.verify_otp_enrty.get().strip()
+        self.new_email = self.new_mail_entry.get().strip()
+
+        def close_btn():
+            self.button_root.destroy()
+            try:
+                for i in self.four_btn_list:
+                    i.config(state=NORMAL)
+            except:
+                pass
+        def button_back(): #for maintaining the expansion of frame for invalid otp
+            self.email_updating_btn.config(state=NORMAL)
+            self.email_updating_btn.config(text='Update', fg="black")
+
+        pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-z]{2,}$'
+
+        if not old_mail:
+            self.old_email_label.config(fg='red')
+            self.old_email_label.after(5000, lambda: self.old_email_label.config(fg="black"))
+            return
+
+        if not self.new_email:
+            self.new_email_label.config(fg='red')
+            self.new_email_label.after(5000, lambda: self.new_email_label.config(fg="black"))
+            return
+
+        if not re.match(pattern,old_mail):
+            error_mail = Label(self.updatingmail_second_frame,text="*Invalid Mail format",fg='red',font=('Arial',12,'bold'))
+            error_mail.pack(side="left",pady=(10, 0),fill='x')
+            error_mail.after(5000, error_mail.destroy)
+            return
+
+        if not re.match(pattern,self.new_email):
+            error_mail = Label(self.updatingmail_second_frame, text="*Invalid Mail format", fg='red',font=('Arial',12,'bold'))
+            error_mail.pack(side="left",pady=(10, 0),fill='x')
+            error_mail.after(5000, error_mail.destroy)
+            return
+
+        if not verify_otp:
+            self.verify_otp_label.config(fg='red')
+            self.verify_otp_label.after(5000, lambda: self.verify_otp_label.config(fg="black"))
+            return
+
+        if old_mail:
+            if verify_otp == str(self.otp_number):
+                    showinfo("Success", "Your email has been Updated")
+                    print("SUCCESS")
+                    close_btn()
+            else:
+                error_text = Label(self.label3_frame,text="* Incorrect OTP",fg='red',bg="#F9F3EF",font=('Arial',12,'bold'))
+                error_text.pack(pady=(10,0))
+                error_text.after(1000, error_text.destroy)
+                self.email_updating_btn.config(state=DISABLED)
+                self.email_updating_btn.config(text='Wait',fg='white')
+                self.email_updating_btn.after(1000, button_back)
+                return
+
+
+        data = self.c.execute("SELECT email FROM profile")
+        row = data.fetchone()
+
+        if row and row[0]:
+            existing_mail = row[0]
+        else:
+            existing_mail = None
+
+        if existing_mail:
+            # Update email if already exists
+            self.c.execute("UPDATE profile SET email = ?", (self.new_email,))
+            self.conn.commit()
+        else:
+            # Insert new row (if table empty)
+            self.c.execute("INSERT INTO profile ( email) VALUES ( ?)", (self.new_email,))
+            self.conn.commit()
+
+        self.accounts_page()
 
     #-------------- DashBoard Page ----------------#
 
@@ -1138,17 +1461,17 @@ class Billing:
         label_frame.pack(fill='x')
         Label(label_frame, text="Your Daily Sales", bg='#FAF9F6', font=("Arial", 14, 'bold')).pack(side="left", pady=10,
                                                                                             padx=30)
-        # Label(label_frame, text="Daily Sales", bg='white', font=("Arial", 14, 'bold')).pack(side='left')
-        Label(label_frame, text=f"{now.strftime('(%A) %d %B, %Y')}", bg='#FAF9F6', font=("Arial", 14, 'bold')).pack(
-            side="left",padx=10)
+        self.daily_track_date = now.strftime('(%A) %d %B %Y')
+        self.daily_time_track_label = (Label(label_frame, text=f"{self.daily_track_date}", bg='#FAF9F6', font=("Arial", 14, 'bold')))
+        self.daily_time_track_label.pack(side="left",padx=10)
 
         self.total_daily_revenue = StringVar(value='Total Amount: ₹0')
         Label(label_frame, textvariable=self.total_daily_revenue,
               font=("Arial", 14, "bold"), bg='#FAF9F6').pack(side="left", padx=100, pady=10)
 
         self.daily_print_btn = Button(label_frame, text="Generate PDF", bg='#28a745', fg='white',
-                                      font=('Arial', 12, 'bold'))
-        self.daily_print_btn.pack(side="right", padx=10, pady=10)
+                                      font=('Arial', 12, 'bold'), command=self.daily_track_pdf)
+        self.daily_print_btn.pack(side="right", padx=(0,40), pady=10)
 
         self.clear_daily_btn =  Button(label_frame, text="Clear Tree", bg='red', fg='white',
                                       font=('Arial', 12, 'bold'), command=self.clear_daily_tree)
@@ -1195,21 +1518,24 @@ class Billing:
         Label(label_frame, text="Your Monthly Sales", bg='#FAF9F6', font=("Arial", 14, 'bold')).pack(side="left", pady=10,padx=40)
 
         self.monthly_print_btn = Button(label_frame, text="Generate PDF", bg='#28a745', fg='white',
-                                      font=('Arial', 12, 'bold'))
-        self.monthly_print_btn.pack(side="right", padx=20, pady=10)
+                                      font=('Arial', 12, 'bold'), command=self.monthly_track_pdf)
+        self.monthly_print_btn.pack(side="right", padx=(0,30), pady=10)
+
+        self.monthly_delete_btn = Button(label_frame, text="Clear Tree", bg='#28a745', fg='white',
+                                        font=('Arial', 12, 'bold'), command=self.clear_monthly_tree_once)
+        self.monthly_delete_btn.pack(side="right", padx=20, pady=10)
 
         monthly_tree_frame = Frame(monthly_track_frame, bg='#FAF9F6')
         monthly_tree_frame.pack(fill='both', expand=True, pady=10)
-        # columns = ('Rank', 'Item', 'Total Sold', 'Total Revenue', 'Orders Count')
-        self.monthly_track_tree = Treeview(monthly_tree_frame, columns=columns, show='headings', height=12)
+        column = ('Sr.no', 'Day & Date', 'Total Revenue Generated', 'Top Selling Item')
+        self.monthly_track_tree = Treeview(monthly_tree_frame, columns=column, show='headings', height=12)
 
         # Configure column headings and widths
         column_configs = {
-            'Rank': {'width': 60, 'anchor': 'center'},
-            'Item Name': {'width': 150, 'anchor': 'w'},
-            'Unit Price': {'width': 100, 'anchor': 'center'},
-            'Total Sold': {'width': 120, 'anchor': 'e'},
-            'Total Revenue': {'width': 100, 'anchor': 'center'}
+            'Sr.no': {'width': 30, 'anchor': 'center'},
+            'Day & Date': {'width': 150, 'anchor': 'center'},
+            'Total Revenue Generated': {'width': 120, 'anchor': 'center'},
+            'Top Selling Item': {'width': 130, 'anchor': 'center'}
         }
 
         for col, config in column_configs.items():
@@ -1224,16 +1550,16 @@ class Billing:
         self.monthly_track_tree.pack(side='left', fill='both', padx=20, expand=True)
         scrollbar.pack(side='right', fill='y')
 
-
         # Configure row colors
         self.monthly_track_tree.tag_configure('evenrow', background='#F8F9FA')
         self.monthly_track_tree.tag_configure('oddrow', background='#FFFFFF')
-        self.monthly_track_tree.tag_configure('top3', background='#E8F5E8', foreground='#2E7D32')
 
+        self.loading_monthly_sales()
         #calling loading data
         self.loading_data()
-        # ---- for updaint the tatal revenue-----#
+        # ---- for updating the total revenue-----#
         self.update_daily_revenue()
+
 
     def update_daily_revenue(self):
         total_revenue = 0
@@ -1252,168 +1578,154 @@ class Billing:
             self.datetime_label.config(text=now)
             self.root.after(1000, self.update_datetime)
 
-    def change_password(self):
-        self.window_for_buttons()
-        self.clear_second_window()
+    def daily_track_pdf(self):
+        if not self.daily_track_tree.get_children():
+            showerror("No Data", "No data found!")
+        else:
+            pdf = FPDF()
+            pdf.add_page()
+            filename = f"{self.daily_track_date} Sales Report.pdf"
 
-        self.change_pass_btn.config(state=DISABLED)
+            desktop_path = os.path.join(os.path.expanduser("~"), "Desktop")
+            path = os.path.join(desktop_path, 'Quick SVR', 'Daily Sales')
+            os.makedirs(path, exist_ok=True)
+            full_path = os.path.join(path, filename)
 
-        def close_btn():
-            self.button_root.destroy()
-            self.change_pass_btn.config(state=NORMAL)
+            # Title
+            pdf.set_font("Arial", 'B', 16)
+            pdf.cell(0, 10, f"{self.daily_track_date} Sales Report", ln=True, align='C')
+            pdf.ln(5)
 
-        main_frame = Frame(self.button_root, bg="#FAF7F3")
-        main_frame.pack(fill='both', padx=10, pady=10, expand=True)
-        self.current_second_button.append(main_frame)
+            # Table Header
+            pdf.set_font("Arial", 'B', 12)
+            pdf.set_fill_color(200, 220, 255)
+            pdf.cell(15, 10, "Rank", border=1, align='C', fill=True)  # smaller
+            pdf.cell(65, 10, "Product Name", border=1, align='C', fill=True)
+            pdf.cell(35, 10, "Unit Price", border=1, align='C', fill=True)
+            pdf.cell(35, 10, "Total Sold", border=1, align='C', fill=True)
+            pdf.cell(40, 10, "Total (Rs)", border=1, align='C', fill=True)
+            pdf.ln()
 
-        second_frame = Frame(main_frame, bg='#FFEAD8', relief="raised", bd=1)
-        second_frame.pack(fill="both", padx=10, pady=100)
+            # Table Rows
+            pdf.set_font("Arial", '', 12)
+            grand_total = 0
+            for child in self.daily_track_tree.get_children():
+                values = self.daily_track_tree.item(child)["values"]
+                order = str(values[0])  # Convert to string
+                name = str(values[1])
+                unit_price = float(str(values[2]).replace("₹", "")) if isinstance(values[2], str) else float(values[2])
+                total_sold = float(str(values[3]).replace("₹", "")) if isinstance(values[3], str) else float(values[3])
+                total_revenue = float(str(values[4]).replace("₹", "")) if isinstance(values[4], str) else float(values[4])
+                grand_total += total_revenue
 
-        label_frame = Frame(second_frame, bg='#F0E4D3', relief="raised", bd=1)
-        label_frame.pack(fill='x', padx=10, pady=10)
+                pdf.cell(15, 10, str(order), border=1)
+                pdf.cell(65, 10, str(name), border=1, align='C')
+                pdf.cell(35, 10, f"{unit_price:.2f}", border=1, align='C')
+                pdf.cell(35, 10, f"{total_sold:.2f}", border=1, align='C')
+                pdf.cell(40, 10, f"{total_revenue:.2f}", border=1, align='C')
+                pdf.ln()
+            # Grand total row
+            pdf.set_font("Arial", 'B', 12)
+            pdf.cell(150, 10, "GRAND TOTAL", border=1, align='R')
+            pdf.cell(40, 10, f"Rs {grand_total:.2f}", border=1, align='C')
 
-        email_label = Label(label_frame, text="Current Email:", font=('Arial', 12, 'bold'), bg='#F0E4D3')
-        email_label.pack(fill='x', side='left', padx=10, pady=10)
+            # Save File
+            pdf.output(full_path)
+            # print(f"PDF saved as {full_path}")
+            self.calling_profile_variables()
+            self.sending_sales_track_mail(full_path)
+            self.load_for_monthly()
 
-        self.old_mail_entry = Entry(label_frame, width=25)
-        self.old_mail_entry.pack(side='left', padx=8, pady=10)
+    def monthly_track_pdf(self):
+        if not self.monthly_track_tree.get_children():
+            showerror("No Data", "No Data Found!")
+        else:
+            pdf = FPDF()
+            pdf.add_page()
+            timestamp = datetime.now().strftime("%B")
+            filename = f"{timestamp} Sales Report.pdf"
 
-        self.send_otp_new = Button(label_frame, text="Send OTP", font=("Arial", 12, 'bold'), bg='#28a745', fg='white',
-                                   command=self.send_otp_newmail)
-        self.send_otp_new.pack(side="left",padx=5, pady=10)
+            desktop_path = os.path.join(os.path.expanduser("~"), "Desktop")
+            path = os.path.join(desktop_path, 'Quick SVR', 'Monthly Sales')
+            os.makedirs(path, exist_ok=True)
+            full_path = os.path.join(path, filename)
 
-        label2_frame = Frame(second_frame, bg='#F0E4D3', relief="raised", bd=1)
-        label2_frame.pack(fill='x', padx=10, pady=10)
+            # Title
+            pdf.set_font("Arial", 'B', 16)
+            pdf.cell(0, 10, f"{timestamp} Sales Report", ln=True, align='C')
+            pdf.ln(5)
 
-        Label(label2_frame, text="Verify OTP: ", font=('Arial', 12, 'bold')
-              , bg='#F0E4D3').pack(fill='x', side='left',padx=10, pady=10)
+            # Table Header
+            pdf.set_font("Arial", 'B', 12)
+            pdf.set_fill_color(200, 220, 255)
+            pdf.cell(15, 10, "Sr.no", border=1, align='C', fill=True)
+            pdf.cell(65, 10, "Day & Date", border=1, align='C', fill=True)
+            pdf.cell(65, 10, "Total Revenue Generated", border=1, align='C', fill=True)
+            pdf.cell(40, 10, "Top Selling item", border=1, align='C', fill=True)
+            pdf.ln()
 
-        self.verify_otp_enrty = Entry(label2_frame, width=25)
-        self.verify_otp_enrty.pack(side='left', padx=30, pady=10)
+            #Table Rows
+            pdf.set_font("Arial",'',12)
+            grand_total = 0
+            for child in self.monthly_track_tree.get_children():
+                values = self.monthly_track_tree.item(child)['values']
+                sr_no = str(values[0])
+                day_date = str(values[1])
+                revenue = float(str(values[2]))
+                selling = str(values[3])
+                grand_total += revenue
 
-        label3_frame = Frame(second_frame, bg='#F0E4D3', relief="raised", bd=1)
-        label3_frame.pack(fill='x', padx=10, pady=10)
+                pdf.cell(15, 10, str(sr_no), border=1, align='C')
+                pdf.cell(65, 10, str(day_date), border=1, align='C')
+                pdf.cell(65, 10, f"{revenue:.2f}", border=1, align='C')
+                pdf.cell(40, 10, str(selling), border=1, align='C')
+                pdf.ln()
+            # Grand total row
+            pdf.set_font("Arial", 'B', 12)
+            pdf.cell(145, 10, "GRAND TOTAL", border=1, align='R')  # (15 + 65 + 35 = 115)
+            pdf.cell(40, 10, f"Rs {grand_total:.2f}", border=1, align='C')
 
-        password_label = Label(label3_frame, text="New Password:", font=('Arial', 12, 'bold'), bg='#F0E4D3')
-        password_label.pack(fill='x', side='left', padx=10, pady=10)
+            # Save File
+            pdf.output(full_path)
+            # print(f"PDF saved as {full_path}")
+            self.calling_profile_variables()
+            self.sending_sales_track_mail(full_path)
 
-        self.new_password_entry = Entry(label3_frame, width=25)
-        self.new_password_entry.pack(side='left', padx=8, pady=10)
+    #---------- send mail for montlhy and daily ---------#
+    def sending_sales_track_mail(self,file_path):
+        self.owner_email = "ncerohan@gmail.com"
+        self.app_password = "kxraktkjspeoeyga"
+        message = EmailMessage()
+        message['Subject'] = 'Your Sales Report'
+        message['From'] = self.owner_email
+        message['To'] = self.email
+        message.set_content("Dear Customer,\n\n"
+    "As per your request, We’ve attached your Sales Report for your review.\n\n"
+    "This report has been automatically generated by Quick SVR for your convenience.\n\n"
+    "If you have any questions or require further assistance, please feel free to reach out to our support team.\n\n"
+    "Best regards,\n"
+    "Team Quick SVR")
 
-        self.pass_updating_btn = Button(second_frame, text="Change", font=('Arial', 12, 'bold'),
-                                         width=15, height=2, bg='#46edc8', fg='white')
-        self.pass_updating_btn.pack(padx=5, pady=10)
+        with open(file_path, 'rb') as f:
+            file_data = f.read()
+            file_name = os.path.basename(file_path)
 
-        self.button_root.protocol("WM_DELETE_WINDOW", close_btn)
-        self.button_root.mainloop()
+        message.add_attachment(file_data, maintype='application', subtype='pdf', filename=file_name)
 
+        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
+            smtp.login(self.owner_email, self.app_password)
+            smtp.send_message(message)
+        showinfo("Success","Email send successfully")
 
-    def accounts_page(self):
-        self.clear_page()
-        self.set_active_button('account')
-        self.accounts_frame = Frame(self.root, bg='white')
-        self.accounts_frame.pack(fill='both', expand=True)
-        self.current_widgets.append(self.accounts_frame)
-
-        head_frame = Frame(self.accounts_frame, bg="#3674B5", relief="raised", bd=3)
-        head_frame.pack(fill='x', padx=20, pady=10)
-
-        Label(head_frame, text="Account Settings", font=('Arial', 18, 'bold')
-              , bg='#3674B5', fg='white').pack(fill='x', padx=20, pady=10)
-
-        # ---------- Profile Frame ----------#
-        your_profile_frame = Frame(self.accounts_frame, bg='#FAF9F6', relief='raised', bd=2)
-        your_profile_frame.pack(fill='x', padx=20, pady=10)
-
-        label_frame = Frame(your_profile_frame, bg='#FAF9F6',relief="raised",bd=2)
-        label_frame.pack(fill='x', padx=20, pady=10)
-
-        Label(label_frame, text='Your Profile', font=('Arial', 14, 'bold'),
-              bg='#FAF9F6').pack(side='left', padx=10)
-
-        self.change_profile_btn = Button(label_frame, text="Update Profile", bg='#00DFA2', fg='white',
-                                      font=('Arial', 12, 'bold'))
-        self.change_profile_btn.pack(side="left", pady=10,padx=30)
-
-        profile_frame= Frame(your_profile_frame, bg='#FAF9F6')
-        profile_frame.pack(fill='x', padx=20, pady=10)
-
-        left_container = Frame(profile_frame, bg='#FAF9F6')
-        left_container.pack(side='left', fill='y', padx=10, pady=10)
-
-        # Name label
-        self.username = StringVar(value='Quick SVR')
-        name_label = Label(left_container, text=f'Name : {self.username.get()}',
-                           font=('Arial', 12, 'bold'), bg='#FAF9F6', fg='black')
-        name_label.pack(anchor='w', pady=2)
-
-        # Subscription start label
-        self.subscription_start = StringVar(value="-")
-        subscription_label = Label(left_container, text=f'Subscription starts : {self.subscription_start.get()}',
-                                   font=('Arial', 12, 'bold'), bg='#FAF9F6', fg='black')
-        subscription_label.pack(anchor='w', pady=2)
-
-        self.subscription_end = StringVar(value="-")
-        subscription_end_label = Label(left_container, text=f'Subscription ends : {self.subscription_end.get()}',
-                                   font=('Arial', 12, 'bold'), bg='#FAF9F6', fg='black')
-        subscription_end_label.pack(anchor='w', pady=2)
-
-        self.gst_number = StringVar(value="-")
-        gst_number_label = Label(left_container, text=f'GST number : {self.gst_number.get()}',
-                                       font=('Arial', 12, 'bold'), bg='#FAF9F6', fg='black')
-        gst_number_label.pack(anchor='w', pady=2)
-
-        #---------- Account Frame ----------#
-        account_frame = Frame(self.accounts_frame, bg='#FAF9F6', relief='raised', bd=2)
-        account_frame.pack(fill='x', padx=20, pady=10)
-
-        account_label_frame = Frame(account_frame, bg='#FAF9F6',relief="raised",bd=2)
-        account_label_frame.pack(fill='x', padx=20,pady=10)
-
-        Label(account_label_frame, text='Your Account', font=('Arial', 14, 'bold'),
-              bg='#FAF9F6').pack(side='left', padx=10,pady=10)
-
-        self.change_email_btn = Button(account_label_frame, text="Update Email", bg='#0079FF', fg='white',
-                                      font=('Arial', 12, 'bold'),command=self.updating_email)
-        self.change_email_btn.pack(side="left", pady=10,padx=20)
-
-        self.change_pass_btn = Button(account_label_frame, text="Change Password", bg='#FF0060', fg='white',
-                                       font=('Arial', 12, 'bold'), command=self.change_password)
-        self.change_pass_btn.pack(side="left", pady=10, padx=10)
-
-        email_frame = Frame(account_frame, bg='#FAF9F6')
-        email_frame.pack(fill='x', padx=20, pady=10)
-
-        Label(email_frame, text="Your Email: ",font=("Arial",14,'bold'),bg='#FAF9F6'
-              ,fg='black').pack(side="left",padx=20)
-
-        self.email_name = StringVar(value='quicksvr@gmail.com')
-        email_label = Label(email_frame, text=f'{self.email_name.get()}',font=('Arial',12,'bold'),bg='#FAF9F6',fg='#9929EA')
-        email_label.pack(side="left")
-
-        # ---------- Support Frame ----------#
-        support_frame = Frame(self.accounts_frame, bg='#FAF9F6', relief='raised', bd=2)
-        support_frame.pack(fill='x', padx=20, pady=10)
-
-        support_label_frame = Frame(support_frame, bg='#FAF9F6', relief="raised", bd=2)
-        support_label_frame.pack(fill='x', padx=20, pady=10)
-
-        Label(support_label_frame, text='Support From Quick SVR', font=('Arial', 14, 'bold'),
-              bg='#FAF9F6').pack(side='left', padx=10, pady=10)
-
-        contact_frame = Frame(support_frame, bg='#FAF9F6')
-        email_frame.pack(fill='x', padx=20, pady=10)
-
-        Label(contact_frame, text="Contact Us: ", font=("Arial", 14, 'bold'), bg='#FAF9F6'
-              , fg='black').pack(side="left", padx=20)
-
-
+    #-------- fetch data for daily tree-------#
     def load_sales_data(self):
         # get the item of main tree in list
         get_data = self.order_tree.get_children()
         self.data_list = []
         if self.conn:
             self.c = self.conn.cursor()
+
+        self.daily_time = self.daily_track_date
 
         try:
             for item in get_data:
@@ -1441,6 +1753,7 @@ class Billing:
                            self.data_list)
         self.conn.commit()
 
+    #--------- loading daily data in tree-------#
     def loading_data(self):
         try:
             for item in self.daily_track_tree.get_children():
@@ -1487,6 +1800,7 @@ class Billing:
                 stats['total_revenue']
             ),tags=(tag,))
 
+    #------ clear daily tree with data base--------#
     def clear_daily_tree(self):
         for row in self.daily_track_tree.get_children():
             self.daily_track_tree.delete(row)
@@ -1494,6 +1808,423 @@ class Billing:
         self.c.execute("delete from daily_track")
         self.conn.commit()
 
+    #------clearimng montly tree temporary-------#
+    def clear_monthly_tree_once(self):
+        for row in self.monthly_track_tree.get_children():
+            self.monthly_track_tree.delete(row)
+
+    #--------- fetch data for montly tracking tree----------
+    def load_for_monthly(self):
+        get_data = self.daily_track_tree.get_children()
+
+        if self.conn:
+            self.c = self.conn.cursor()
+
+        date = self.daily_track_date
+        raw_amount  = self.total_daily_revenue.get()
+        amount = raw_amount.replace("Total Amount:","").replace("₹","")
+        total_revenue = amount
+        check = self.c.execute("select * from monthly_track")
+        data = check.fetchall()
+        rank = 0
+        for ranks in data:
+            rank = ranks[0]
+
+        top_selling = 0
+        try:
+            for idx,item in enumerate(get_data, 1):
+                values = self.daily_track_tree.item(item, 'values')
+                top_selling = values[1]
+                rank = idx+rank
+                break
+            if not top_selling or top_selling == 0:
+                top_selling = "Data Not Available"
+        except:
+            top_selling = "Data Not Available"
+
+        if rank % 2 ==0:
+            tag = 'evenrow'
+        else:
+            tag = 'oddrow'
+
+        self.c.execute("select time from monthly_track where time =?", (str(date),))
+        existing_date = self.c.fetchone()
+        updated_rank = 0
+        if existing_date:
+            existing_date = existing_date[0]
+            self.c.execute("select rank from monthly_track where time =?",(str(existing_date),))
+            updated_rank = self.c.fetchone()
+            updated_rank = updated_rank[0]
+
+
+        if existing_date == date: # for stop duplicating the data
+            # self.loading_monthly_sales()
+            self.c.execute("delete from monthly_track where time=?", (existing_date,))
+            self.conn.commit()
+            rank = updated_rank
+            self.c.execute("insert into monthly_track(rank,time,total_revenue,top_selling) values(?,?,?,?)",
+                           (rank, str(date), str(total_revenue), str(top_selling),))
+            self.conn.commit()
+            self.clear_monthly_tree_once()
+            self.monthly_track_tree.insert("", "end", values=(rank, date, total_revenue, top_selling), tags=(tag,))
+
+        else:
+            self.c.execute("insert into monthly_track(rank,time,total_revenue,top_selling) values(?,?,?,?)",
+                           (rank, str(date), str(total_revenue), str(top_selling),))
+            self.conn.commit()
+        self.monthly_track_tree.insert("", "end", values=(rank, date, total_revenue, top_selling), tags=(tag,))
+        self.dashboard_page()
+
+    #--- for loading monthly sales in tree view-----#
+    def loading_monthly_sales(self):
+        # Fetch all rows from monthly_track table
+        self.c.execute("SELECT rank, time, total_revenue, top_selling FROM monthly_track")
+        data = self.c.fetchall()
+
+        for row in data:
+            rank, date, total_revenue, top_selling = row
+
+            if int(rank) % 2 == 0:
+                tag = "evenrow"
+            else:
+                tag = "oddrow"
+
+            self.monthly_track_tree.insert(
+                "", "end",
+                values=(rank, date, total_revenue, top_selling),
+                tags=(tag,)
+            )
+
+
+    def accounts_page(self):
+        self.clear_page()
+        self.set_active_button('account')
+        self.calling_profile_variables()
+        self.accounts_frame = Frame(self.root, bg='white')
+        self.accounts_frame.pack(fill='both', expand=True)
+        self.current_widgets.append(self.accounts_frame)
+
+        head_frame = Frame(self.accounts_frame, bg="#3674B5", relief="raised", bd=3)
+        head_frame.pack(fill='x', padx=20, pady=10)
+
+        Label(head_frame, text="Account Settings", font=('Arial', 18, 'bold')
+              , bg='#3674B5', fg='white').pack(fill='x', padx=20, pady=10)
+
+        # ---------- Profile Frame ----------#
+        your_profile_frame = Frame(self.accounts_frame, bg='#FAF9F6', relief='raised', bd=2)
+        your_profile_frame.pack(fill='x', padx=20, pady=10)
+
+        label_frame = Frame(your_profile_frame, bg='#FAF9F6',relief="raised",bd=2)
+        label_frame.pack(fill='x', padx=20, pady=10)
+
+        Label(label_frame, text='Your Profile', font=('Arial', 14, 'bold'),
+              bg='#FAF9F6').pack(side='left', padx=10)
+
+        self.update_profile_btn = Button(label_frame, text="Update Profile", bg='#00DFA2', fg='white',
+                                      font=('Arial', 12, 'bold'), command=self.update_profile)
+        self.update_profile_btn.pack(side="left", pady=10,padx=30)
+
+        profile_frame= Frame(your_profile_frame, bg='#FAF9F6')
+        profile_frame.pack(fill='x', padx=20, pady=10)
+
+        left_container = Frame(profile_frame, bg='#FAF9F6')
+        left_container.pack(side='left', fill='both', padx=10, pady=10)
+
+        # Name label
+        # self.username = StringVar(value='Quick SVR')
+        name_frame = Frame(left_container,bg='#FAF9F6')
+        name_frame.pack(fill='x')
+        name_label = Label(name_frame, text='Shop Name : ',
+                           font=('Arial', 12, 'bold'), bg='#FAF9F6', fg='black')
+        name_label.pack( side="left",pady=2)
+        self.username = Label(name_frame, text=f"{self.shop_name}",
+                           font=('Arial', 12, 'bold'), bg='#FAF9F6', fg='black')
+        self.username.pack(anchor='w', pady=2)
+
+        # Subscription start label
+        sub_start_frame = Frame(left_container,bg='#FAF9F6')
+        sub_start_frame.pack(fill='x')
+        subscription_label = Label(sub_start_frame, text=f'Subscription starts : ',
+                                   font=('Arial', 12, 'bold'), bg='#FAF9F6', fg='black')
+        subscription_label.pack(side="left", pady=2)
+        self.subscription_start = Label(sub_start_frame, text='Provide Name',
+                           font=('Arial', 12, 'bold'), bg='#FAF9F6', fg='black')
+        self.subscription_start.pack(anchor='w', pady=2)
+
+        sub_end_frame = Frame(left_container, bg='#FAF9F6')
+        sub_end_frame.pack(fill='x')
+        subscription_end_label = Label(sub_end_frame, text=f'Subscription ends : ',
+                                   font=('Arial', 12, 'bold'), bg='#FAF9F6', fg='black')
+        subscription_end_label.pack(side='left', pady=2)
+        self.subscription_end = Label(sub_end_frame, text='Provide Name',
+              font=('Arial', 12, 'bold'), bg='#FAF9F6', fg='black')
+        self.subscription_end.pack(anchor='w', pady=2)
+
+        gst_num_frame = Frame(left_container,bg='#FAF9F6')
+        gst_num_frame.pack(fill='x')
+        gst_number_label = Label(gst_num_frame, text=f'GST number : ',
+                                       font=('Arial', 12, 'bold'), bg='#FAF9F6', fg='black')
+        gst_number_label.pack(side="left", pady=2)
+        self.gst_number = Label(gst_num_frame, text=f"{self.gst_number}",
+              font=('Arial', 12, 'bold'), bg='#FAF9F6', fg='black')
+        self.gst_number.pack(anchor='w', pady=2)
+
+        #---------- Account Frame ----------#
+        account_frame = Frame(self.accounts_frame, bg='#FAF9F6', relief='raised', bd=2)
+        account_frame.pack(fill='x', padx=20, pady=10)
+
+        account_label_frame = Frame(account_frame, bg='#FAF9F6',relief="raised",bd=2)
+        account_label_frame.pack(fill='x', padx=20,pady=10)
+
+        Label(account_label_frame, text='Your Account', font=('Arial', 14, 'bold'),
+              bg='#FAF9F6').pack(side='left', padx=10,pady=10)
+
+        self.change_email_btn = Button(account_label_frame, text="Update Email", bg='#0079FF', fg='white',
+                                      font=('Arial', 12, 'bold'),command=self.updating_email)
+        self.change_email_btn.pack(side="left", pady=10,padx=20)
+
+        self.change_pass_btn = Button(account_label_frame, text="Change Password", bg='#FF0060', fg='white',
+                                       font=('Arial', 12, 'bold'), command=self.change_password)
+        self.change_pass_btn.pack(side="left", pady=10, padx=10)
+
+        email_frame = Frame(account_frame, bg='#FAF9F6')
+        email_frame.pack(fill='x', padx=20, pady=10)
+
+        Label(email_frame, text="Your Email: ",font=("Arial",14,'bold'),bg='#FAF9F6'
+              ,fg='black').pack(side="left",padx=20)
+
+        #----------- Fetching email from Database ---------#
+        self.c.execute("SELECT COUNT(*) FROM profile")
+        row_count = self.c.fetchone()[0]
+
+        if row_count == 0:
+            self.c.execute("INSERT INTO profile (email) VALUES (?)", (None,))
+            self.conn.commit()
+
+        self.c.execute("SELECT email FROM profile")
+        row = self.c.fetchone()
+
+        if row and row[0]:
+            self.exist_email = row[0]
+        else:
+            self.exist_email = "Not Provided"
+        email_label = Label(email_frame, text=self.exist_email,font=('Arial',12,'bold'),bg='#FAF9F6',fg='#9929EA')
+        email_label.pack(side="left")
+
+        # ---------- Support Frame ----------#
+        support_frame = Frame(self.accounts_frame, bg='#FAF9F6', relief='raised', bd=2)
+        support_frame.pack(fill='x', padx=20, pady=10)
+
+        support_label_frame = Frame(support_frame, bg='#FAF9F6', relief="raised", bd=2)
+        support_label_frame.pack(fill='x', padx=20, pady=10)
+
+        Label(support_label_frame, text='Support From Quick SVR', font=('Arial', 14, 'bold'),
+              bg='#FAF9F6').pack(side='left', padx=10, pady=10)
+
+        contact_frame = Frame(support_frame, bg='#FAF9F6')
+        email_frame.pack(fill='x', padx=20, pady=10)
+
+        Label(contact_frame, text="Contact Us: ", font=("Arial", 14, 'bold'), bg='#FAF9F6'
+              , fg='black').pack(side="left", padx=20)
+        #------------ END of Account Section---------------#
+
+    def update_profile(self):
+        self.window_for_buttons()
+        self.clear_second_window()
+        screen_width = self.button_root.winfo_screenwidth()
+        screen_height = self.button_root.winfo_screenheight()
+        win_width = 500
+        win_height = 600
+        # X position → center horizontally
+        x_offset = (screen_width // 2) - (win_width // 2)
+        # Y position → center vertically
+        y_offset = (screen_height // 2) - (win_height // 2)
+        # Apply geometry
+        self.button_root.geometry(f"{win_width}x{win_height}+{x_offset}+{y_offset}")
+
+        self.update_profile_btn.config(state=DISABLED) #stopping to create duplicate tabs
+        try: #ensure that image is available
+            logo = PhotoImage(file='..png')
+            self.button_root.iconphoto(True, logo)
+        except:
+            pass
+
+        def close_btn():
+            self.button_root.destroy()
+            self.update_profile_btn.config(state=NORMAL)
+            return
+
+        main_frame = Frame(self.button_root, bg="#4A9782")
+        main_frame.pack(fill='both', padx=10, pady=10, expand=True)
+        self.current_second_button.append(main_frame)
+
+        frame_one = Frame(main_frame, bg='#F9F3EF', relief="raised", bd=2)
+        frame_one.pack(fill='x', padx=10, pady=100)
+
+        shop_name_frame = Frame(frame_one, bg='#F9F3EF', relief="raised", bd=2)
+        shop_name_frame.pack(anchor='w',fill='x', padx=10, pady=(30,0))
+
+        Label(shop_name_frame, text=" Update Shop Name: ",font=('Arial', 12, 'bold')
+          , bg="#F9F3EF", fg='black').pack(side="left", padx=10, pady=10)
+
+        self.updated_shop_name = ttk.Entry(shop_name_frame, width=30)
+        self.updated_shop_name.pack(side="left",padx=(25,0))
+
+        gst_frame = Frame(frame_one, bg='#F9F3EF', relief="raised", bd=2)
+        gst_frame.pack(anchor='w', fill='x', padx=10, pady=(20,20))
+
+        Label(gst_frame, text=" Update GST Number : ", font=('Arial', 12, 'bold')
+              , bg="#F9F3EF", fg='black').pack(side="left", padx=10, pady=10)
+
+        self.updated_gst_number = ttk.Entry(gst_frame, width=30)
+        self.updated_gst_number.pack(side="left", padx=25)
+
+        self.updating_profile_button = Button(frame_one, text="Update", font=('Arial', 12, 'bold'),
+                                  width=15, height=2, bg='#3D74B6', fg='white', command=self.updating_profile)
+        self.updating_profile_button.pack(pady=20)
+        self.button_root.protocol("WM_DELETE_WINDOW", close_btn)
+        try:
+            self.button_root.mainloop()
+        except:
+            pass
+
+    #----- fetching and updaing the update profile ----#
+    def updating_profile(self):
+        shop_name = self.updated_shop_name.get()
+        gst_number = self.updated_gst_number.get()
+
+        self.c.execute("SELECT COUNT(*) FROM profile")
+        row_count = self.c.fetchone()[0]
+
+        if row_count == 0:
+            # Insert an empty row first (so we can update later)
+            self.c.execute("INSERT INTO profile (shop_name, gst_number) VALUES (?, ?)", (None, None))
+            self.conn.commit()
+
+        if shop_name and shop_name.strip() != "":
+            self.c.execute("UPDATE profile SET shop_name = ?", (shop_name,))
+            self.conn.commit()
+
+        if gst_number and gst_number.strip() != "":
+            self.c.execute("UPDATE profile SET gst_number = ?", (gst_number,))
+            self.conn.commit()
+        showinfo("Success", "Updated Successfully")
+        self.update_profile_btn.config(state=NORMAL)
+        self.accounts_page()
+        self.calling_profile_variables()
+        self.button_root.destroy()
+        #---------------------------------------------------------#
+
+    def change_password(self):
+        self.window_for_buttons()
+        self.clear_second_window()
+        #Disable button
+        self.change_pass_btn.config(state=DISABLED)
+        try:
+            logo = PhotoImage(file='..png')
+            self.button_root.iconphoto(True, logo)
+        except:
+            pass
+
+        main_frame = Frame(self.button_root, bg="#4A9782")
+        main_frame.pack(fill='both', padx=10,pady=10,expand=True)
+        self.current_second_button.append(main_frame)
+
+        Label(main_frame, text=" * OTP has been sent to your mail kindly verify to proceed futher. ", font=('Times New Romen', 10, 'bold')
+              , bg="white", fg='red').pack(fill="x", padx=10, pady=(40,0))
+
+        frame_one = Frame(main_frame, bg='#F9F3EF', relief="raised", bd=2)
+        frame_one.pack(fill='x', padx=10, pady=(70,0))
+
+        self.verify_new_pass_label = Label(frame_one, text="Verify OTP : ", font=('Arial', 12, 'bold')
+              , bg="#F9F3EF", fg='black')
+        self.verify_new_pass_label.pack(side="left", padx=10, pady=10)
+
+        self.verify_pass_otp = ttk.Entry(frame_one, width=25)
+        self.verify_pass_otp.pack(side='left', padx=8, pady=10)
+
+        self.send_pass_otp = Button(frame_one, text="Verify", font=("Arial", 12, 'bold'), bg='#0D5EA6', fg='white',
+                                   command=self.verify_pass_change)
+        self.send_pass_otp.pack(side="left", pady=10, padx=(30, 0))
+
+        frame_two = Frame(main_frame, bg='#F9F3EF', relief="raised", bd=2)
+        frame_two.pack(fill='x', padx=10, pady=(25,0))
+
+        self.new_pass_label = Label(frame_two, text="New Password : ", font=('Arial', 12, 'bold'),
+                                    bg="#F9F3EF", fg='red')
+        self.new_pass_label.pack(side="left", padx=10, pady=10)
+
+        self.new_pass = ttk.Entry(frame_two, width=25, state=DISABLED)
+        self.new_pass.pack(side='left', padx=8, pady=10)
+
+        frame_three = Frame(main_frame, bg='#4A9782')
+        frame_three.pack(fill='x', padx=10, pady=(25,0))
+
+        self.pass_otp_button = Button(frame_three, text="Submit", font=('Arial', 12, 'bold'),
+                                      width=15, height=2, bg='#0D5EA6', fg='white',command=self.pass_change_verification, state=DISABLED)
+        self.pass_otp_button.pack(padx=10, pady=10)
+
+        #-------- Mail Structure ------------#
+        self.otp_generating()
+        self.mail_address = self.exist_email
+        self.mail_subject = "Confirm Your Password Change Request"
+        self.html_message = self.html_message = f"""
+            <div style="font-family:Arial,Helvetica,sans-serif; max-width:600px; margin:auto; padding:20px; 
+            background:#f9f9f9; border:1px solid #ddd; border-radius:12px;">
+
+            <!-- Header -->
+            <div style="background:#6C63FF; color:#fff; padding:15px; text-align:center; border-radius:10px 10px 0 0;">
+            <h2 style="margin:0;">Quick SVR Security</h2>
+            </div>
+
+            <!-- Body -->
+            <div style="padding:20px; color:#333;">
+            <p>Hello,</p>
+            <p>We received a request to <b>change the password</b> linked to your account.</p>
+            <p>Please use the One-Time Password (OTP) below to confirm this change:</p>
+
+            <!-- OTP Box -->
+            <div style="font-size:36px; font-weight:bold; color:#6C63FF; background:#fff; 
+                border:2px dashed #6C63FF; border-radius:10px; 
+                text-align:center; padding:15px; margin:25px 0;">
+                {self.otp_number}
+            </div>
+
+            <p style="color:#555;">This code will expire in <b>5 minutes</b>. 
+            If you did not request this change, please ignore this email or contact our support team immediately.</p>
+             </div>
+
+             <!-- Footer -->
+            <div style="background:#f1f1f1; padding:12px; text-align:center; font-size:12px; color:#777; border-radius:0 0 10px 10px;">
+            <p>Best regards,<br><b>Quick SVR Team</b></p>
+            </div>
+            </div>
+            """
+
+        self.sending_otp_email() #calling the send mail function
+        self.button_root.protocol("WM_DELETE_WINDOW", self.change_pass_btn.config(state=NORMAL))
+        try:
+            self.button_root.mainloop()
+        except:
+            pass
+        #--------------------------------------------------------------------------------------------
+
+
+    def verify_pass_change(self):
+        otp = self.otp_number
+        received_otp = self.verify_pass_otp.get().strip()
+        if otp == received_otp:
+            self.verify_pass_otp.config(background='green')
+            self.new_pass.config(state=NORMAL)
+            self.new_pass_label.config(fg='black')
+            self.pass_otp_button.config(state=NORMAL)
+        else:
+            self.verify_pass_otp.config(background='red')
+            self.verify_new_pass_label.config(fg='red')
+        return
+
+    def pass_change_verification(self):
+        return
 
 if __name__ == "__main__":
     app = Billing()

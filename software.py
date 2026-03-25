@@ -44,23 +44,34 @@ class Billing:
         self.gst_number=""
         self.email = ""
         self.app_password_value = ""
+        self.login_email_value = ""
         self.account_login_password = ""
 
     #------- calling profile variables --------#
+    def get_latest_profile_row(self):
+        try:
+            self.c.execute(
+                "SELECT rowid, shop_name, gst_number, email, app_password, login_email, account_password, last_login_date "
+                "FROM profile ORDER BY rowid DESC LIMIT 1"
+            )
+            return self.c.fetchone()
+        except:
+            return None
+
     def calling_profile_variables(self):
-        self.c.execute("SELECT shop_name, gst_number, email, app_password, account_password FROM profile")
-        row = self.c.fetchone()
+        row = self.get_latest_profile_row()
 
         if row:  # if there is data
-            name, gst, email, app_password, account_password = row
+            _, name, gst, email, app_password, login_email, account_password, _ = row
         else:
-            name, gst, email, app_password, account_password = None, None, None, None, None
+            name, gst, email, app_password, login_email, account_password = None, None, None, None, None, None
 
         # Assign to variables with fallback
         self.shop_name = name if name else "Not Provided"
         self.gst_number = gst if gst else "Not Provided"
         self.email = email
         self.app_password_value = app_password if app_password else ""
+        self.login_email_value = login_email if login_email else ""
         self.account_login_password = account_password if account_password else ""
 
     # --- creating main database ---
@@ -73,11 +84,13 @@ class Billing:
             self.c.execute("create table if not exists menu(name text, price integer)")
             self.c.execute("create table if not exists daily_track(id integer, name text, total_sold integer, unit_price float, total_revenue float)")
             self.c.execute("create table if not exists monthly_track(rank integer, time text, total_revenue float, top_selling text)")
-            self.c.execute("create table if not exists profile(shop_name text, gst_number text, email text, app_password text, account_password text, last_login_date text)")
+            self.c.execute("create table if not exists profile(shop_name text, gst_number text, email text, app_password text, login_email text, account_password text, last_login_date text)")
             self.c.execute("PRAGMA table_info(profile)")
             existing_columns = [column[1] for column in self.c.fetchall()]
             if "app_password" not in existing_columns:
                 self.c.execute("ALTER TABLE profile ADD COLUMN app_password text")
+            if "login_email" not in existing_columns:
+                self.c.execute("ALTER TABLE profile ADD COLUMN login_email text")
             if "account_password" not in existing_columns:
                 self.c.execute("ALTER TABLE profile ADD COLUMN account_password text")
             if "last_login_date" not in existing_columns:
@@ -88,13 +101,16 @@ class Billing:
 
             if profile_count == 0:
                 self.c.execute(
-                    "INSERT INTO profile (shop_name, gst_number, email, app_password, account_password, last_login_date) VALUES (?, ?, ?, ?, ?, ?)",
-                    (None, None, None, None, "Admin@123", None)
+                    "INSERT INTO profile (shop_name, gst_number, email, app_password, login_email, account_password, last_login_date) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (None, None, None, None, None, "Admin@123", None)
                 )
             else:
                 self.c.execute(
                     "UPDATE profile SET account_password = ? WHERE account_password IS NULL OR TRIM(account_password) = ''",
                     ("Admin@123",)
+                )
+                self.c.execute(
+                    "UPDATE profile SET login_email = email WHERE (login_email IS NULL OR TRIM(login_email) = '') AND email IS NOT NULL AND TRIM(email) <> ''"
                 )
             self.conn.commit()
         except Exception as e:
@@ -154,10 +170,9 @@ class Billing:
 
     def get_saved_email_credentials(self):
         try:
-            self.c.execute("SELECT email, app_password FROM profile")
-            row = self.c.fetchone()
+            row = self.get_latest_profile_row()
             if row:
-                email, app_password = row
+                _, _, _, email, app_password, _, _, _ = row
             else:
                 email, app_password = None, None
         except:
@@ -169,17 +184,62 @@ class Billing:
 
     def get_login_credentials(self):
         try:
-            self.c.execute("SELECT email, account_password, last_login_date FROM profile")
-            row = self.c.fetchone()
+            row = self.get_latest_profile_row()
             if row:
-                email, account_password, last_login_date = row
+                _, _, _, _, _, login_email, account_password, last_login_date = row
             else:
-                email, account_password, last_login_date = None, None, None
+                login_email, account_password, last_login_date = None, None, None
         except:
-            email, account_password, last_login_date = None, None, None
+            login_email, account_password, last_login_date = None, None, None
 
         self.account_login_password = account_password if account_password else ""
-        return email, self.account_login_password, last_login_date
+        self.login_email_value = login_email if login_email else ""
+        return self.login_email_value, self.account_login_password, last_login_date
+
+    def get_email_display_lines(self):
+        sending_email, _ = self.get_saved_email_credentials()
+        login_email, _, _ = self.get_login_credentials()
+
+        sending_email = sending_email.strip() if sending_email else ""
+        login_email = login_email.strip() if login_email else ""
+
+        if sending_email and login_email:
+            if sending_email.lower() == login_email.lower():
+                return [f"Sending & Login Email: {sending_email}"]
+            return [
+                f"Sending Email: {sending_email}",
+                f"Login Email: {login_email}"
+            ]
+
+        if sending_email:
+            return [f"Sending Email: {sending_email}"]
+
+        if login_email:
+            return [f"Login Email: {login_email}"]
+
+        return ["Email: Not Provided"]
+
+    def show_mail_connection_error(self, context_text="send email"):
+        showerror(
+            "Connection Error",
+            f"Unable to {context_text} because the internet or DNS connection is not available."
+        )
+
+    def send_email_message(self, sender_email, sender_password, message, context_text="send email"):
+        try:
+            with smtplib.SMTP_SSL('smtp.gmail.com', 465, timeout=20) as smtp:
+                smtp.login(sender_email, sender_password)
+                smtp.send_message(message)
+            return True
+        except OSError:
+            self.show_mail_connection_error(context_text)
+        except smtplib.SMTPAuthenticationError:
+            showerror("Authentication Error", "Your sending email or app password is incorrect.")
+        except smtplib.SMTPException as e:
+            showerror("Email Error", f"Unable to {context_text}: {e}")
+        except Exception as e:
+            showerror("Email Error", f"Unable to {context_text}: {e}")
+        return False
 
     #---------- EMAIl Sending --------#
     def sending_otp_email(self):
@@ -198,12 +258,7 @@ class Billing:
         if self.html_message:
             msg.add_alternative(self.html_message, subtype='html')
 
-        try:
-            with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
-                smtp.login(sender_email, sender_password)
-                smtp.send_message(msg)
-        except Exception as e:
-            print(e)
+        return self.send_email_message(sender_email, sender_password, msg, "send OTP email")
 
     # --- adding items to menu ---
     def load_item_menu(self):
@@ -375,6 +430,8 @@ class Billing:
 
         self.login_email_entry = ttk.Entry(email_frame, width=30)
         self.login_email_entry.pack(side='left', padx=10, pady=10)
+        if email:
+            self.login_email_entry.insert(0, email)
 
         password_frame = Frame(login_frame, bg='#F9F3EF', relief="raised", bd=1)
         password_frame.pack(fill='x', padx=10, pady=10)
@@ -464,6 +521,7 @@ class Billing:
                     "generate_bill",
                     "update_profile_btn",
                     "change_email_btn",
+                    "change_login_email_btn",
                     "change_pass_btn",
                 ):
                     button = getattr(self, button_name, None)
@@ -760,13 +818,8 @@ class Billing:
 
         message.add_attachment(file_data, maintype='application', subtype='pdf', filename=file_name)
 
-        try:
-            with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
-                smtp.login(self.owner_email, self.app_password)
-                smtp.send_message(message)
+        if self.send_email_message(self.owner_email, self.app_password, message, "send bill email"):
             showinfo("Success", "Email send successfully")
-        except:
-            showerror("No Connection Found", "Kindly check your Internet Connection!")
 
         self.button_root.protocol("WM_DELETE_WINDOW", close_btn)
         close_btn()
@@ -986,6 +1039,94 @@ class Billing:
         else:
             self.add_email_credentials_window()
 
+    def open_login_credentials_window(self):
+        self.window_for_buttons()
+        self.clear_second_window()
+
+        try:
+            self.change_login_email_btn.configure(state=DISABLED)
+        except:
+            pass
+
+        main_frame = Frame(self.button_root, bg="#4A9782")
+        main_frame.pack(fill='both', padx=10, pady=10, expand=True)
+        self.current_second_button.append(main_frame)
+
+        content_frame = Frame(main_frame, bg='#F9F3EF', relief="raised", bd=2)
+        content_frame.pack(fill='x', padx=10, pady=110)
+
+        Label(content_frame, text="Login Credentials", font=('Arial', 16, 'bold'),
+              bg='#F9F3EF', fg='black').pack(pady=(20, 10))
+
+        Label(
+            content_frame,
+            text="This email is only for daily login access.\nIt does not change your billing email or app password.",
+            font=('Arial', 11),
+            bg='#F9F3EF',
+            fg='black',
+            justify='center'
+        ).pack(pady=(0, 20))
+
+        login_email_frame = Frame(content_frame, bg='#F9F3EF', relief="raised", bd=1)
+        login_email_frame.pack(fill='x', padx=10, pady=10)
+
+        Label(login_email_frame, text="Login Email:", font=('Arial', 12, 'bold'),
+              bg='#F9F3EF', fg='black').pack(side='left', padx=10, pady=10)
+
+        self.login_email_setup_entry = ttk.Entry(login_email_frame, width=30)
+        self.login_email_setup_entry.pack(side='left', padx=10, pady=10)
+
+        existing_login_email, _, _ = self.get_login_credentials()
+        if existing_login_email:
+            self.login_email_setup_entry.insert(0, existing_login_email)
+
+        self.save_login_email_btn = Button(
+            content_frame,
+            text="Save",
+            font=('Arial', 12, 'bold'),
+            width=15,
+            height=2,
+            bg='#0D5EA6',
+            fg='white',
+            command=self.save_login_credentials
+        )
+        self.save_login_email_btn.pack(pady=(20, 30))
+
+    def save_login_credentials(self):
+        login_email = self.login_email_setup_entry.get().strip()
+        pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-z]{2,}$'
+
+        if not re.match(pattern, login_email):
+            self.guarded_showerror(
+                "Invalid Email",
+                "Enter a valid login email address.",
+                self.save_login_email_btn
+            )
+            return
+
+        try:
+            self.c.execute("SELECT COUNT(*) FROM profile")
+            row_count = self.c.fetchone()[0]
+
+            if row_count == 0:
+                self.c.execute(
+                    "INSERT INTO profile (shop_name, gst_number, login_email, account_password) VALUES (?, ?, ?, ?)",
+                    (None, None, login_email, "Admin@123")
+                )
+            else:
+                self.c.execute(
+                    "UPDATE profile SET login_email = ?",
+                    (login_email,)
+                )
+
+            self.conn.commit()
+            self.login_email_value = login_email
+            showinfo("Success", "Login email saved successfully.")
+            self.close_popup_window()
+            self.accounts_page()
+        except Exception as e:
+            self.guarded_showerror("Save Error", f"Problem: {e}", self.save_login_email_btn)
+
     def add_email_credentials_window(self):
         self.window_for_buttons()
         self.clear_second_window()
@@ -1079,8 +1220,8 @@ class Billing:
 
             if row_count == 0:
                 self.c.execute(
-                    "INSERT INTO profile (shop_name, gst_number, email, app_password) VALUES (?, ?, ?, ?)",
-                    (None, None, email_address, app_password)
+                    "INSERT INTO profile (shop_name, gst_number, email, app_password, login_email, account_password) VALUES (?, ?, ?, ?, ?, ?)",
+                    (None, None, email_address, app_password, None, "Admin@123")
                 )
             else:
                 self.c.execute(
@@ -1275,7 +1416,7 @@ class Billing:
         update_btn_frame.pack(fill='x',padx=10,pady=10)
         update_btn_frame.pack_propagate(False)
 
-        Label(update_btn_frame, text="Manage Item List: ",
+        Label(update_btn_frame, text="Manage Products: ",
               font=('Arial', 14, 'bold'), bg='white', fg='black').pack(side="left", pady=10, padx=10)
 
         self.add_item_btn = Button(update_btn_frame, text="Add New Item",bg='#A4DD00',fg='white',
@@ -1798,11 +1939,10 @@ class Billing:
             self.guarded_showerror("Not Found", "No Email Address Found! Enter a valid Email", self.send_new_otp, "Send OTP")
             return
 
-        self.c.execute("SELECT email FROM profile")
-        row = self.c.fetchone()
+        row = self.get_latest_profile_row()
 
-        if row and row[0]:
-            email_value = row[0]
+        if row and row[3]:
+            email_value = row[3]
         if email_add != email_value:
             self.guarded_showerror("Not Found", "Incorrect email! Kindly check your email", self.send_new_otp, "Send OTP")
             return
@@ -1930,13 +2070,8 @@ class Billing:
                 self.email_updating_btn.after(1000, button_back)
                 return
 
-        data = self.c.execute("SELECT email FROM profile")
-        row = data.fetchone()
-
-        if row and row[0]:
-            existing_mail = row[0]
-        else:
-            existing_mail = None
+        row = self.get_latest_profile_row()
+        existing_mail = row[3] if row and row[3] else None
 
         if existing_mail:
             # Update email if already exists
@@ -2209,31 +2344,41 @@ class Billing:
     #---------- send mail for montlhy and daily ---------#
     def sending_sales_track_mail(self,file_path):
         self.owner_email, self.app_password = self.get_saved_email_credentials()
+        login_email, _, _ = self.get_login_credentials()
+
         if not self.owner_email or not self.app_password:
-            showerror("Email Setup Required", "Add your email and app password first.")
+            showerror("Email Setup Required", "Add your sending email and app password first.")
+            return
+
+        if not login_email:
+            showerror("Login Email Required", "Add a login email first to receive sales reports.")
             return
 
         message = EmailMessage()
         message['Subject'] = 'Your Sales Report'
         message['From'] = self.owner_email
-        message['To'] = self.email
-        message.set_content("Dear Customer,\n\n"
-    "As per your request, We’ve attached your Sales Report for your review.\n\n"
-    "This report has been automatically generated by Quick SVR for your convenience.\n\n"
-    "If you have any questions or require further assistance, please feel free to reach out to our support team.\n\n"
-    "Best regards,\n"
-    "Team Quick SVR")
+        message['To'] = login_email
+        message.set_content(
+            "Dear Customer,\n\n"
+            "As per your request, We’ve attached your Sales Report for your review.\n\n"
+            "This report has been automatically generated by Quick SVR for your convenience.\n\n"
+            "If you have any questions or require further assistance, please feel free to reach out to our support team.\n\n"
+            "Best regards,\n"
+            "Team Quick SVR"
+        )
 
-        with open(file_path, 'rb') as f:
-            file_data = f.read()
-            file_name = os.path.basename(file_path)
+        try:
+            with open(file_path, 'rb') as f:
+                file_data = f.read()
+                file_name = os.path.basename(file_path)
 
-        message.add_attachment(file_data, maintype='application', subtype='pdf', filename=file_name)
+            message.add_attachment(file_data, maintype='application', subtype='pdf', filename=file_name)
+        except Exception as e:
+            showerror("File Error", f"Unable to attach sales report: {e}")
+            return
 
-        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
-            smtp.login(self.owner_email, self.app_password)
-            smtp.send_message(message)
-        showinfo("Success","Email send successfully")
+        if self.send_email_message(self.owner_email, self.app_password, message, "send sales report"):
+            showinfo("Success", f"Sales report sent to {login_email}")
 
     #-------- fetch data for daily tree-------#
     def load_sales_data(self):
@@ -2419,6 +2564,8 @@ class Billing:
         self.set_active_button('account')
         self.calling_profile_variables()
         saved_email, _ = self.get_saved_email_credentials()
+        login_email, _, _ = self.get_login_credentials()
+        display_email_lines = self.get_email_display_lines()
         self.accounts_frame = Frame(self.root, bg='white')
         self.accounts_frame.pack(fill='both', expand=True)
         self.current_widgets.append(self.accounts_frame)
@@ -2503,33 +2650,37 @@ class Billing:
                                       font=('Arial', 12, 'bold'),command=self.open_email_settings)
         self.change_email_btn.pack(side="left", pady=10,padx=20)
 
+        login_email_button_text = "Add Login Email" if not login_email else "Update Login Email"
+        self.change_login_email_btn = Button(
+            account_label_frame,
+            text=login_email_button_text,
+            bg='#5D688A',
+            fg='white',
+            font=('Arial', 12, 'bold'),
+            command=self.open_login_credentials_window
+        )
+        self.change_login_email_btn.pack(side="left", pady=10, padx=10)
+
         self.change_pass_btn = Button(account_label_frame, text="Change Password", bg='#FF0060', fg='white',
                                        font=('Arial', 12, 'bold'), command=self.change_password)
         self.change_pass_btn.pack(side="left", pady=10, padx=10)
 
-        email_frame = Frame(account_frame, bg='#FAF9F6')
-        email_frame.pack(fill='x', padx=20, pady=10)
+        email_section_frame = Frame(account_frame, bg='#FAF9F6')
+        email_section_frame.pack(fill='x', padx=20, pady=10)
 
-        Label(email_frame, text="Your Email: ",font=("Arial",14,'bold'),bg='#FAF9F6'
-              ,fg='black').pack(side="left",padx=20)
+        Label(email_section_frame, text="Your Email:", font=("Arial", 14, 'bold'),
+              bg='#FAF9F6', fg='black').pack(anchor='w', padx=20)
 
-        #----------- Fetching email from Database ---------#
-        self.c.execute("SELECT COUNT(*) FROM profile")
-        row_count = self.c.fetchone()[0]
+        for line in display_email_lines:
+            Label(
+                email_section_frame,
+                text=line,
+                font=('Arial', 12, 'bold'),
+                bg='#FAF9F6',
+                fg='#9929EA'
+            ).pack(anchor='w', padx=40, pady=2)
 
-        if row_count == 0:
-            self.c.execute("INSERT INTO profile (email, app_password) VALUES (?, ?)", (None, None))
-            self.conn.commit()
-
-        self.c.execute("SELECT email FROM profile")
-        row = self.c.fetchone()
-
-        if row and row[0]:
-            self.exist_email = row[0]
-        else:
-            self.exist_email = "Not Provided"
-        email_label = Label(email_frame, text=self.exist_email,font=('Arial',12,'bold'),bg='#FAF9F6',fg='#9929EA')
-        email_label.pack(side="left")
+        self.exist_email = saved_email if saved_email else "Not Provided"
 
         # ---------- Support Frame ----------#
         support_frame = Frame(self.accounts_frame, bg='#FAF9F6', relief='raised', bd=2)
@@ -2542,7 +2693,7 @@ class Billing:
               bg='#FAF9F6').pack(side='left', padx=10, pady=10)
 
         contact_frame = Frame(support_frame, bg='#FAF9F6')
-        email_frame.pack(fill='x', padx=20, pady=10)
+        contact_frame.pack(fill='x', padx=20, pady=10)
 
         Label(contact_frame, text="Contact Us: ", font=("Arial", 14, 'bold'), bg='#FAF9F6'
               , fg='black').pack(side="left", padx=20)
@@ -2637,9 +2788,8 @@ class Billing:
 
     def change_password(self):
         try:
-            self.c.execute("SELECT email FROM profile")
-            row = self.c.fetchone()
-            saved_email = row[0] if row and row[0] else None
+            row = self.get_latest_profile_row()
+            saved_email = row[3] if row and row[3] else None
         except:
             saved_email = None
 
@@ -2783,19 +2933,32 @@ class Billing:
             return
 
         try:
+            login_email, _, _ = self.get_login_credentials()
+            fallback_email, _ = self.get_saved_email_credentials()
+            login_email_to_store = login_email if login_email else fallback_email
+
             self.c.execute("SELECT COUNT(*) FROM profile")
             row_count = self.c.fetchone()[0]
 
             if row_count == 0:
                 self.c.execute(
-                    "INSERT INTO profile (email, app_password, account_password) VALUES (?, ?, ?)",
-                    (self.exist_email if hasattr(self, "exist_email") else None, None, new_password)
+                    "INSERT INTO profile (email, app_password, login_email, account_password) VALUES (?, ?, ?, ?)",
+                    (
+                        self.exist_email if hasattr(self, "exist_email") else None,
+                        None,
+                        login_email_to_store,
+                        new_password
+                    )
                 )
             else:
-                self.c.execute("UPDATE profile SET account_password = ?", (new_password,))
+                self.c.execute(
+                    "UPDATE profile SET account_password = ?, login_email = COALESCE(NULLIF(login_email, ''), ?)",
+                    (new_password, login_email_to_store)
+                )
 
             self.conn.commit()
             self.account_login_password = new_password
+            self.login_email_value = login_email_to_store if login_email_to_store else self.login_email_value
             showinfo("Success", "Password updated successfully.")
             self.close_popup_window()
         except Exception as e:
